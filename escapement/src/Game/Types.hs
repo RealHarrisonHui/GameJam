@@ -5,7 +5,7 @@ module Game.Types
   , Config (..), defaultConfig
   , TemporalMode (..), TimeState (..), TimeInput (..), initialTime
   , HazardTick
-  , Route (..), Hazard (..), Zone (..), Prompt (..), Cog, Level (..), blankLevel
+  , Route (..), Hazard (..), Gate (..), Zone (..), Prompt (..), Cog, Level (..), blankLevel
   , TickInput (..), noInput
   , Phase (..), Game (..)
   ) where
@@ -46,6 +46,8 @@ data Config = Config
   , cfgGalleryPhase   :: !Int
   , cfgMaxFrameTime   :: !Double  -- ^ seconds; longer frames are clamped
   , cfgMaxCatchUp     :: !Int     -- ^ most simulation ticks run in one frame
+  , cfgDoorGrace      :: !Double  -- ^ a closing door only crushes a player this far inside it
+  , cfgPinReach       :: !Double  -- ^ how close the player's centre must come to take a pin
   , cfgFreezeBuffer   :: !Int     -- ^ a press this many ticks before the debt clears still counts
   , cfgReducedEffects :: !Bool    -- ^ drop trails, sparks and moving decoration
   , cfgGhost          :: !Bool    -- ^ show where each wheel lands when the debt clears
@@ -70,6 +72,8 @@ defaultConfig = Config
   , cfgGalleryPhase   = 40
   , cfgMaxFrameTime   = 0.1
   , cfgMaxCatchUp     = 5
+  , cfgDoorGrace      = 4
+  , cfgPinReach       = 28
   , cfgFreezeBuffer   = 8
   , cfgReducedEffects = False
   , cfgGhost          = True
@@ -111,6 +115,15 @@ data Route = Route
 
 newtype Hazard = Hazard { hazardRoute :: Route } deriving (Eq, Show)
 
+-- | A door on the clock. Whether it is open depends only on the hazard clock, so
+-- the brake holds it as it is and repayment swings it at double speed.
+data Gate = Gate
+  { gateRect    :: !Rect
+  , gatePeriod  :: !Int  -- ^ hazard ticks for one full open-and-shut cycle
+  , gateOpenFor :: !Int  -- ^ hazard ticks it stands open within each cycle
+  , gatePhase   :: !Int  -- ^ hazard ticks already elapsed at clock zero
+  } deriving (Eq, Show)
+
 -- | Marked floor that no wheel can reach. Decoration and test data, not a rule.
 data Zone = Zone
   { zoneRect  :: !Rect
@@ -136,6 +149,9 @@ data Level = Level
   , lvlZones     :: [Zone]
   , lvlExit      :: !Rect
   , lvlHazards   :: [Hazard]
+  , lvlGates     :: [Gate]
+  , lvlPins      :: [Vec]     -- ^ all must be taken, in any order, before the exit opens
+  , lvlPar       :: !Int      -- ^ ticks borrowed for the top rating; 0 means unrated
   , lvlTitle     :: String    -- ^ the floor's name
   , lvlBrief     :: [String]  -- ^ the note shown before the floor
   , lvlPrompts   :: [Prompt]  -- ^ teaches a verb, never a solution
@@ -150,6 +166,7 @@ blankLevel :: Level
 blankLevel = Level
   { lvlWalls = [], lvlFloors = [], lvlStart = Vec 0 0, lvlStartArea = Rect 0 0 0 0
   , lvlZones = [], lvlExit = Rect 9000 9000 9001 9001, lvlHazards = []
+  , lvlGates = [], lvlPins = [], lvlPar = 0
   , lvlTitle = "", lvlBrief = [], lvlPrompts = [], lvlHint = []
   , lvlNoteAt = Vec (-576) 330, lvlCogs = [], lvlGhosts = True }
 
@@ -175,6 +192,7 @@ data Game = Game
   , gTime     :: !TimeState
   , gTicks    :: !Int        -- ^ simulation ticks of play in this attempt
   , gBorrowed :: !Int        -- ^ total ticks frozen this attempt (end-screen statistic)
-  , gHitBy    :: !(Maybe Int)  -- ^ index of the hazard that ended the attempt
+  , gHitBy    :: !(Maybe Int)  -- ^ the hazard that ended the attempt; Nothing if a door did
+  , gPins     :: [Int]       -- ^ pins taken so far, most recent first
   , gQueued   :: !Bool       -- ^ a freeze pressed just before the debt cleared, still held
   } deriving (Eq, Show)

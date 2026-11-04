@@ -112,7 +112,9 @@ mkScene cfg floorNumber floorCount level = Scene
           , Color (withA 0.6 verdigris) (Pictures
               [ thickSeg 2 (x, t - 10) (x + 8, t - 2) | x <- [l + 4, l + 16 .. r - 12] ])
           ]
-    startMarks =
+    -- An open room has no one way forward, so it gets no arrows or start box.
+    startMarks | not (null (lvlPins level)) = Blank
+               | otherwise =
       let (l, b, r, t) = rectF (lvlStartArea level)
           (sx, sy) = v2 (lvlStart level)
       in Pictures
@@ -251,8 +253,10 @@ floorFrame cfg level scene campaign fx = Pictures
   , Color (withA (0.13 * strainF) ember) (scFloorShape scene)
   , Pictures (scRails scene)
   , repayStreaks
+  , pinsPic
   , exitPad
   , notePanel
+  , gatesPic
   , trails
   , ghosts
   , Pictures (zipWith hazardPic (lvlHazardsPositions) [0 :: Int ..])
@@ -307,17 +311,78 @@ floorFrame cfg level scene campaign fx = Pictures
            , let t = travel d
            , t >= 0, t <= len ]
 
+    pinsLeft = length (lvlPins level) - length (gPins game)
+
     exitPad =
       let (l, b, r, t) = rectF (lvlExit level)
           cx = (l + r) / 2
           cy = (b + t) / 2
           pulse = if moving then 1 + 0.04 * sin (tick * 0.05) else 1
-      in at cx cy (Pictures
-           [ glow verdigris 38 0.55
-           , Color (withA 0.25 verdigris) (circleSolid 34)
-           , Scale pulse pulse (Rotate (tick * 0.3) (scExitMark scene))
-           , at 0 (-7) (Color cream (label 15 "EXIT"))
-           ])
+      in at cx cy $
+           if pinsLeft > 0
+             then Pictures
+               [ Color (withA 0.25 brassDim) (circleSolid 34)
+               , Color brassDim (ThickCircle 34 3)
+               , at 0 (-7) (Color brassDim (label 15 "EXIT"))
+               , at 0 (-26) (Color brass (label 10 (printf "%d LEFT" pinsLeft)))
+               ]
+             else Pictures
+               [ glow verdigris 38 0.55
+               , Color (withA 0.25 verdigris) (circleSolid 34)
+               , Scale pulse pulse (Rotate (tick * 0.3) (scExitMark scene))
+               , at 0 (-7) (Color cream (label 15 "EXIT"))
+               ]
+
+    -- Pins: a bright diamond while it is there, a hollow socket once it is taken.
+    pinsPic = Pictures
+      [ at x y (if i `elem` gPins game
+          then Color (withA 0.6 brassDim) (Pictures [ThickCircle 11 2])
+          else Pictures
+            [ glow brass 14 (0.55 + 0.2 * sin (tick * 0.07))
+            , Color brass (diamond 12)
+            , Color cream (diamond 5)
+            ])
+      | (i, pin) <- zip [0 :: Int ..] (lvlPins level)
+      , let (x, y) = v2 pin ]
+
+    -- Doors. Shut: solid, striped iron, drawn exactly to its blocking rectangle.
+    -- Open: bare floor between two rails. Lamps along it count down to the change.
+    gatesPic = Pictures (map gatePic (lvlGates level))
+    gatePic gate =
+      let (l, b, r, t) = rectF (gateRect gate)
+          open = gateOpen gate (tsClock time)
+          vertical = t - b > r - l
+          phase = (tsClock time + gatePhase gate) `mod` gatePeriod gate
+          left = if open then gateOpenFor gate - phase else gatePeriod gate - phase
+          span' = if open then gateOpenFor gate else gatePeriod gate - gateOpenFor gate
+          lamps = 5 :: Int
+          lit = ceiling (fromIntegral lamps * fromIntegral left / fromIntegral span' :: Float) :: Int
+          c = if open then verdigris else ember
+          lampAt i =
+            let u = (fromIntegral i + 0.5) / fromIntegral lamps :: Float
+            in if vertical then (l - 9, b + (t - b) * u) else (l + (r - l) * u, b - 9)
+          stripes
+            | vertical = [ thickSeg 3 (l, y) (r, y + 8) | y <- [b + 4, b + 16 .. t - 8] ]
+            | otherwise = [ thickSeg 3 (x, b) (x + 8, t) | x <- [l + 4, l + 16 .. r - 8] ]
+      in Pictures
+           ( (if open
+                then [ Color verdigris (if vertical
+                         then Pictures [quad l (b - 3) r b, quad l t r (t + 3)]
+                         else Pictures [quad (l - 3) b l t, quad r b (r + 3) t]) ]
+                else [ Color ink (quad l b r t)
+                     , Color brass (boxLines 2 l b r t)
+                     , Color (withA 0.8 ember) (Pictures stripes) ])
+           ++ [ let (x, y) = lampAt i
+                in at x y (Color (if i < lit then c else withA 0.25 brassDim) (diamond 3.5))
+              | i <- [0 .. lamps - 1] ])
+
+    -- What each door will be when the debt clears: a small word beside it.
+    gateGhosts =
+      [ at ((l + r) / 2) (t + 12) (Color (if willOpen then verdigris else ember)
+          (label 9 (if willOpen then "WILL OPEN" else "WILL SHUT")))
+      | gate <- lvlGates level
+      , let (l, _, r, t) = rectF (gateRect gate)
+            willOpen = gateOpen gate (tsClock time + 2 * tsDebt time) ]
 
     trails = Pictures
       [ Color (withA (0.34 * (1 - fromIntegral i / fromIntegral (cfgTrailLength cfg)) * max 0.2 strainF) ember)
@@ -334,13 +399,14 @@ floorFrame cfg level scene campaign fx = Pictures
           let c = if mode == Frozen then frost else ember
               r = realToFrac (cfgHazardRadius cfg) :: Float
           in Pictures
+               ( gateGhosts ++
                [ at x y (Pictures
                    [ Color (withA 0.16 c) (circleSolid r)
                    , Color (withA 0.85 c) (ThickCircle r 2)
                    , Color (withA 0.85 c) (Pictures [ Rotate a (at 0 r (quad (-3) (-5) 3 5)) | a <- [0, 45 .. 315] ])
                    ])
                | p <- settledPositions level time
-               , let (x, y) = v2 p ]
+               , let (x, y) = v2 p ])
 
     hazardPic pos i =
       let (x, y) = v2 pos
@@ -407,6 +473,7 @@ floorFrame cfg level scene campaign fx = Pictures
               RingFreeze  -> (frost, 180)
               RingRelease -> (ember, 120)
               RingCleared -> (verdigris, 110)
+              RingPin     -> (brass, 90)
               RingImpact  -> (ember, 70)
               RingWin     -> (verdigris, 150)
             radius = 16 + reachPx * (1 - (1 - u) * (1 - u)) ]
@@ -541,12 +608,25 @@ floorFrame cfg level scene campaign fx = Pictures
         (if mode == Frozen && tsDebt time > 0
            then "A BRAKE DOES NOT SURVIVE A PAUSE: THE DEBT FALLS DUE ON RESUME."
            else "THE CLOCK AND THE DEBT ARE HOLDING.")
-      Lost -> banner ember "CAUGHT" "ENTER OR R TO RETRY" (lossReason mode)
-      Won -> banner verdigris (lvlTitle level) "ENTER TO CLIMB ON"
-        (printf "CLEARED IN %.1f S, HAVING BORROWED %.1f S."
-           (secondsOf (gTicks game)) (secondsOf (gBorrowed game)))
+      Lost -> banner ember "CAUGHT" "ENTER OR R TO RETRY"
+        (maybe "THE DOOR SHUT ON YOU. READ THE LAMPS BESIDE IT." (const (lossReason mode)) (gHitBy game))
+      Won -> banner verdigris (ratingOr (lvlTitle level)) "ENTER TO CLIMB ON   R TO TRY AGAIN"
+        (printf "CLEARED IN %.1f S, HAVING BORROWED %.1f S.%s"
+           (secondsOf (gTicks game)) (secondsOf (gBorrowed game)) parNote)
       _ -> Blank
     secondsOf n = fromIntegral n / fromIntegral (cfgTicksPerSecond cfg) :: Double
+
+    -- The less borrowed, the better the rating. Floors without a par are unrated.
+    par = lvlPar level
+    ratingOr fallback
+      | par == 0 = fallback
+      | gBorrowed game <= par = "PAID IN FULL"
+      | gBorrowed game * 2 <= par * 3 = "SETTLED"
+      | otherwise = "IN ARREARS"
+    parNote :: String
+    parNote
+      | par == 0 = ""
+      | otherwise = printf " PAID IN FULL: %.1f S." (secondsOf par)
 
     -- A band, not a full-screen wash, so the wheel that got you stays visible.
     banner c big small detail =

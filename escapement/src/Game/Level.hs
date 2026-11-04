@@ -2,6 +2,9 @@
 module Game.Level
   ( mkLevel
   , mkLevels
+  , mkRooms
+  , gateOpen
+  , closedGates
   , wallsFromFloors
   , safeZones
   , routePosition
@@ -27,6 +30,66 @@ import Game.Types
 -- 5. One clock rules every wheel, and debt can be repaid on the move.
 mkLevels :: Config -> [Level]
 mkLevels cfg = [undercroft, shafts, countingRoom, mkLevel cfg, mainspring]
+
+-- | Machine rooms: open floors with several routes. The sample comes first.
+mkRooms :: Config -> [Level]
+mkRooms _ = [escapeWheel]
+
+-- | The sample machine room. A hub with three wings, one pin in each, taken in
+-- any order, and each with its own price:
+--
+-- * West: a fast wheel in a slot. A short brake, cheap.
+-- * East: a long corridor swept by one wheel, with an alcove at the far end. The
+--   same corridor must be walked twice, so the price is largest here.
+-- * South: two doors in opposite phase, with a fast wheel between them. The far
+--   door can be held open with the brake, or caught as it swings.
+--
+-- >                 [ EXIT ]
+-- >  PIN | slot | [   HUB   ] | ---- corridor ---- PIN alcove
+-- >                 |door|
+-- >              vestibule -- shaft --|door| VAULT, PIN
+escapeWheel :: Level
+escapeWheel = withNote floorEscapeWheel blankLevel
+  { lvlWalls = wallsFromFloors floors
+  , lvlFloors = floors
+  , lvlStart = Vec 0 (-20)
+  , lvlStartArea = hub
+  , lvlZones =
+      [ Zone westRoom "" ""
+      , Zone alcove "" ""
+      , Zone vestibule "" ""
+      , Zone vault "" "" ]
+  , lvlExit = Rect (-34) 140 34 200
+  , lvlHazards =
+      [ Hazard (Route [Vec (-180) 75, Vec (-180) (-25)] 15 0)
+      , Hazard (Route [Vec 180 25, Vec 580 25] 40 0)
+      , Hazard (Route [Vec 176 (-120), Vec 176 (-220)] 15 0)
+      ]
+  , lvlGates =
+      [ Gate (Rect (-35) (-84) 35 (-70)) 120 40 0
+      , Gate (Rect 300 (-200) 314 (-140)) 120 40 60
+      ]
+  , lvlPins = [Vec (-340) 25, Vec 460 (-52), Vec 430 (-170)]
+  , lvlPar = 460
+  , lvlNoteAt = Vec (-576) 330
+  , lvlCogs = defaultCogs
+  }
+  where
+    hub = Rect (-120) (-70) 120 110
+    exitBay = Rect (-40) 110 40 210
+    westRoom = Rect (-420) (-70) (-240) 120
+    alcove = Rect 432 (-79) 488 (-21)
+    vestibule = Rect (-80) (-216) 60 (-84)
+    vault = Rect 314 (-250) 500 (-100)
+    floors =
+      [ hub, exitBay
+      , Rect (-134) (-10) (-120) 60, Rect (-226) (-55) (-134) 105
+      , Rect (-240) (-10) (-226) 60, westRoom
+      , Rect 120 (-10) 134 60, Rect 134 (-21) 620 71, alcove
+      , Rect (-35) (-84) 35 (-70), vestibule
+      , Rect 60 (-200) 130 (-140), Rect 130 (-250) 222 (-90), Rect 222 (-200) 300 (-140)
+      , Rect 300 (-200) 314 (-140), vault
+      ]
 
 withNote :: NoteText -> Level -> Level
 withNote note level = level
@@ -292,9 +355,17 @@ hazardPositions level tick = [routePosition (hazardRoute h) tick | h <- lvlHazar
 settledPositions :: Level -> TimeState -> [Vec]
 settledPositions level ts = hazardPositions level (tsClock ts + 2 * tsDebt ts)
 
--- | Clock ticks after which every hazard is back where it started.
+-- | Only a function of the clock, like the wheels, so a door holds no state.
+gateOpen :: Gate -> HazardTick -> Bool
+gateOpen gate tick = (tick + gatePhase gate) `mod` gatePeriod gate < gateOpenFor gate
+
+closedGates :: Level -> HazardTick -> [Rect]
+closedGates level tick = [gateRect g | g <- lvlGates level, not (gateOpen g tick)]
+
+-- | Clock ticks after which every wheel and door is back where it started.
 levelCycle :: Level -> Int
-levelCycle level = foldr (lcm . routePeriod . hazardRoute) 1 (lvlHazards level)
+levelCycle level =
+  foldr lcm 1 (map (routePeriod . hazardRoute) (lvlHazards level) ++ map gatePeriod (lvlGates level))
 
 -- | The teaching line for this moment, if any.
 activePrompt :: Level -> Game -> Maybe String

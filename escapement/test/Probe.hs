@@ -133,6 +133,11 @@ main = do
       >>= report "Crossing 1, no freeze: start -> still room"
     search cfg level cell roomCentre won exitCentre
       >>= report "Crossing 2, no freeze: still room -> exit") [3, 2]
+  printf "-- the sample room, grid 3 px: can any pin be reached without the brake?\n"
+  let room = head (mkRooms cfg)
+  mapM_ (\(i, pin) -> search cfg room 3 (lvlStart room) ((i `elem`) . gPins) pin
+           >>= \v -> report (printf "Pin %d, no brake" (i + 1 :: Int)) v { vTrail = [] })
+        (zip [0 ..] (lvlPins room))
   printf "-- every floor, grid 3 px\n"
   mapM_ (\(i, lv) -> noBrake cfg i lv) (zip [0 ..] levels)
   oneHoldReach cfg (levels !! 2)

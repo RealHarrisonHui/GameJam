@@ -7,6 +7,7 @@ module Game.Solution
   , solutionInputs
   , floorInputs
   , campaignInputs
+  , roomInputs
   ) where
 
 import Game.Collision (moveWithWalls)
@@ -172,6 +173,126 @@ mainspringBot level g
       | x >= -446 = walk (1, lane)
       | mode == Normal && abs (shaftY - 166) >= 72 && longEast = hold (walk (1, lane))
       | otherwise = noInput
+
+-- | The sample machine room, taking its pins in the given order. It only ever
+-- acts on what a player can see: where the wheels are and which doors stand open.
+roomBot :: Config -> Level -> [Int] -> Game -> TickInput
+roomBot cfg level order g
+  | x < -134 = westWing
+  | y < -70 = southWing
+  | x > 134 = eastWing
+  | otherwise = hub
+  where
+    here@(Vec x y) = gPlayer g
+    time = gTime g
+    mode = tsMode time
+    clock = tsClock time
+    normal = mode == Normal
+    frozen = mode == Frozen
+    taken i = i `elem` gPins g
+    remaining = filter (not . taken) order
+    target = case remaining of
+      (i : _) -> Just i
+      []      -> Nothing
+
+    walk (mx, my) = noInput { tiMoveX = mx, tiMoveY = my }
+    hold i = i { tiFreezeHeld = True }
+    wait = noInput
+    towards (Vec tx ty) = (axis (tx - x), axis (ty - y))
+    axis d | d > 2 = 1
+           | d < -2 = -1
+           | otherwise = 0 :: Int
+    goTo = walk . towards
+
+    -- Walk around a stopped wheel in a slot, keeping level with the doors at the
+    -- walls so a corner never catches. The same move in either direction.
+    crossing dir cx cy i =
+      let wy = wheelY level i clock
+          around = if wy >= cy then wy - 44 else wy + 44
+          ahead = fromIntegral (dir :: Int) * (x - cx)
+          target' | ahead > -36 && ahead < 20 = around
+                  | otherwise = max (cy - 15) (min (cy + 15) around)
+          my | y < target' - 2 = 1
+             | y > target' + 2 = -1
+             | otherwise = 0 :: Int
+          reach = cfgPlayerRadius cfg + cfgHazardRadius cfg - cfgContactGrace cfg
+          next (mx, moveY) = moveWithWalls (lvlWalls level) (cfgPlayerRadius cfg) here
+            (moveDelta cfg noInput { tiMoveX = mx, tiMoveY = moveY })
+          safe step = vDist (next step) (Vec cx wy) > reach + 0.5
+          (stepX, stepY) = head (filter safe [(dir, my), (dir, 0), (0, my)] ++ [(0, 0)])
+      in hold (walk (stepX, stepY))
+
+    hub = case target of
+      Just 0  -> if x > -124 || abs (y - 25) > 3 then goTo (Vec (-126) 25)
+                 else if frozen || (normal && wheelClear) then crossing (-1) (-180) 25 0
+                 else wait
+      Just 1  -> if x < 126 || abs (y - 25) > 3 then goTo (Vec 128 25)
+                 else if normal && wheelX level 1 clock > 230 && heading level 1 clock then walk (1, 0)
+                 else wait
+      Just _  -> if abs x > 3 || y > -58 then goTo (Vec 0 (-60))
+                 else if normal && gateOpenAt 0 18 then walk (0, -1) else wait
+      Nothing -> goTo (Vec 0 170)
+
+    gateOpenAt i margin =
+      let gate = lvlGates level !! i
+      in gateOpen gate clock && gateOpen gate (clock + margin)
+
+    westWing
+      | not (taken 0) && x > -236 = crossing (-1) (-180) 25 0
+      | not (taken 0) = goTo (lvlPins level !! 0)
+      | x < -236 && x > -238 && not normal = wait
+      | x < -236 = if x < -240 then goTo (Vec (-237) 25) else if frozen || (normal && wheelClear) then crossing 1 (-180) 25 0 else wait
+      | otherwise = crossing 1 (-180) 25 0
+    -- Catching the slot wheel near an end of its track leaves the door free.
+    wheelClear = abs (wheelY level 0 clock - 25) >= 26
+
+    eastWing
+      | not (taken 1) = eastIn
+      | otherwise = eastOut
+    wheelFar = wheelX level 1 clock >= 515
+    eastIn
+      | y < -21 = if frozen && y > -30 then hold (walk (0, -1)) else goTo (lvlPins level !! 1)
+      | frozen = hold (intoAlcove)
+      | normal && wheelFar = hold (intoAlcove)
+      | otherwise = intoAlcove
+    intoAlcove
+      | x < 458 = walk (1, axis (25 - y))
+      | otherwise = walk (0, -1)
+    eastOut
+      | frozen && y < -21 && tsDebt time > 30 = wait
+      | frozen = hold (homeward)
+      | normal && wheelFar = hold (homeward)
+      | y < -21 = wait
+      | otherwise = homeward
+    homeward
+      | y < 22 = walk (0, 1)
+      | otherwise = walk (-1, 0)
+
+    southWing
+      | y > -98 = walk (0, if taken 2 then 1 else -1)
+      | not (taken 2) = southIn
+      | otherwise = southOut
+    southIn
+      | x < 40 = goTo (Vec 42 (-170))
+      | x < 332 = if frozen then crossing' 1
+                  else if normal && gateOpenAt 1 0 then crossing' 1
+                  else if x > 45 then crossing' 1
+                  else wait
+      | otherwise = goTo (lvlPins level !! 2)
+    crossing' dir = crossing dir 176 (-170) 2
+    southOut
+      | x > 336 && not frozen = goTo (Vec 334 (-170))
+      | x > 60 = if frozen then crossing' (-1)
+                 else if normal && gateOpenAt 1 0 then crossing' (-1)
+                 else if x < 300 then crossing' (-1)
+                 else wait
+      | abs x > 3 || y < -104 = goTo (Vec 0 (-101))
+      | normal && gateOpenAt 0 18 = walk (0, 1)
+      | otherwise = wait
+
+-- | The inputs that clear a machine room, taking its pins in the given order.
+roomInputs :: Config -> Level -> [Int] -> [TickInput]
+roomInputs cfg level order = botInputs cfg level (roomBot cfg level order)
 
 -- | The inputs that clear one floor, given its place in the campaign.
 floorInputs :: Config -> [Level] -> Int -> [TickInput]

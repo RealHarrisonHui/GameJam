@@ -31,7 +31,7 @@ $env:PATH = "C:\ghcup\msys64\mingw64\bin;$env:PATH"; cabal run exe:escapement
 
 | Flag | Effect |
 |---|---|
-| `--level=N` | Start at floor N's note |
+| `--level=N` | Start at floor N's note; 6 is the sample machine room |
 | `--demo` | Watch the scripted run of every floor, then take over |
 | `--demo-stop=N` | As `--demo`, holding the picture after N ticks |
 | `--no-hints`, `--no-ghost` | Remove teaching or landing ghosts, for playtests |

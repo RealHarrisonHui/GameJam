@@ -579,6 +579,66 @@ main = do
        && activePrompt lv fresh { gPlayer = Vec (-420) 70 } == Just "HOLD SPACE"
        && activePrompt lv fresh { gTime = TimeState Frozen 5 0, gPlayer = Vec (-340) 40 } == Just "KEEP HOLDING. WALK AROUND IT"
 
+  section "Clock doors"
+  let testGate = Gate (Rect 40 (-40) 54 40) 100 30 0
+      doorRoom = (arena [] nowhere) { lvlGates = [testGate] }
+      inDoorRoom clock p = (newAttempt cfg doorRoom) { gPlayer = p, gTime = initialTime { tsClock = clock } }
+      stepDoor input g = stepGame cfg doorRoom input g
+      walkRight = move 1 0
+      walked clock = iterate (stepDoor walkRight) (inDoorRoom clock (Vec 20 0)) !! 8
+      Vec openX _ = gPlayer (walked 0)
+      Vec shutX _ = gPlayer (walked 40)
+      braked = iterate (stepDoor freezeHold) (stepDoor freezeStart (inDoorRoom 10 (Vec 0 0))) !! 60
+      repaying = iterate (stepDoor noInput) braked !! 5
+  check "   A door is open only for its share of the clock" $
+    map (gateOpen testGate) [0, 29, 30, 99, 100] == [True, True, False, False, True]
+  check "   An open door lets the player through, a shut door stops them" $
+    openX > 40 && shutX < 28
+  check "   The brake holds a door exactly as it is" $
+    tsClock (gTime braked) == 10 && gateOpen testGate (tsClock (gTime braked))
+  check "   Repayment runs a door's clock at double speed" $
+    tsClock (gTime repaying) == 20
+  check "   A door shutting on the player is fatal, and names no wheel" $
+    let g = iterate (stepDoor noInput) (inDoorRoom 28 (Vec 47 0)) !! 5
+    in gPhase g == Lost && gHitBy g == Nothing
+  check "   A door that only clips the player's shoulder does not wedge or kill them" $
+    let start = inDoorRoom 28 (Vec 66.5 0)
+        g = iterate (stepDoor (move 1 0)) (iterate (stepDoor noInput) start !! 5) !! 5
+        Vec x _ = gPlayer g
+    in gPhase g == Playing && x > 66.5
+
+  section "Pins and the locked exit"
+  let pinRoom = (arena [] (Rect 100 (-20) 140 20)) { lvlPins = [Vec 30 0, Vec 60 0] }
+      inPinRoom p = (newAttempt cfg pinRoom) { gPlayer = p }
+      stepPin input g = stepGame cfg pinRoom input g
+  check "   A pin is taken on contact, once" $
+    gPins (iterate (stepPin noInput) (inPinRoom (Vec 30 0)) !! 3) == [0]
+  check "   The exit does nothing until every pin is taken" $
+    gPhase (stepPin noInput (inPinRoom (Vec 120 0))) == Playing
+  check "   With every pin taken, the exit clears the floor" $
+    gPhase (stepPin noInput ((inPinRoom (Vec 120 0)) { gPins = [0, 1] })) == Won
+  check "   Floors with no pins still open at once" $
+    gPhase (stepGame cfg (arena [] (Rect (-5) (-5) 5 5)) noInput (newAttempt cfg (arena [] (Rect (-5) (-5) 5 5)))) == Won
+
+  section "The sample machine room"
+  let room = head (mkRooms cfg)
+      orders = [[0, 1, 2], [0, 2, 1], [1, 0, 2], [1, 2, 0], [2, 0, 1], [2, 1, 0]]
+      roomRun order = scanl (flip (stepGame cfg room)) (newAttempt cfg room) (roomInputs cfg room order)
+      results = [ (order, last (roomRun order)) | order <- orders ]
+      winners = [ o | (o, g) <- results, gPhase g == Won ]
+  mapM_ (\(o, g) -> printf "      order %s: %-7s %5d ticks, %4d ticks borrowed, peak debt %3d\n" (show o) (show (gPhase g))
+          (gTicks g) (gBorrowed g) (maximum (map (tsDebt . gTime) (roomRun o)))) results
+  check "   At least two pin orders clear the room" $
+    length winners >= 2
+  check "   The top rating is within reach of a real run" $
+    any (\(_, g) -> gPhase g == Won && gBorrowed g <= lvlPar room) results
+  check "   A winning run really took its pins in the order it chose" $
+    all (\o -> reverse (gPins (last (roomRun o))) == o) winners
+  check "   The room's marked zones are safe through the full cycle" $
+    all (zoneIsSafe room) (safeZones room)
+  check "   The start area is safe through the full cycle" $
+    zoneIsSafe room (lvlStartArea room)
+
   failed <- readIORef failures
   total <- readIORef count
   printf "%d checks, %d failed\n" total failed

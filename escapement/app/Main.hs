@@ -1,7 +1,7 @@
 -- | The IO boundary: window, clock and key events. Everything else is pure.
 --
 --   escapement                     play from the title
---   escapement --level=N           start at floor N's note (1 to 5)
+--   escapement --level=N           start at floor N's note (1 to 5, or 6 for the sample room)
 --   escapement --reduced-effects   no trails, sparks or moving decoration
 --   escapement --no-hints          no teaching prompts or after-death hints, for playtests
 --   escapement --no-ghost          no landing ghosts, for playtests
@@ -37,12 +37,20 @@ main = do
         { cfgReducedEffects = "--reduced-effects" `elem` args
         , cfgHints = "--no-hints" `notElem` args
         , cfgGhost = "--no-ghost" `notElem` args }
-      levels = mkLevels cfg
+      -- Machine rooms follow the floors, reachable with --level= while on trial.
+      campaign = mkLevels cfg
+      levels | maybe False (> length campaign) (argNumber "--level=") = campaign ++ mkRooms cfg
+             | otherwise = campaign
       count = length levels
       scenes = [ mkScene cfg i count level | (i, level) <- zip [1 ..] levels ]
       argNumber name = listToMaybe (mapMaybe (fmap read . stripPrefix name) args) :: Maybe Int
       stopAt = argNumber "--demo-stop="
       demo = "--demo" `elem` args || stopAt /= Nothing
+      demoScript
+        | not demo = []
+        | length levels > length campaign =
+            noInput { tiConfirmPressed = True } : roomInputs cfg (last levels) [0, 2, 1]
+        | otherwise = campaignInputs cfg levels
       start0 = case argNumber "--level=" of
         Just n  -> campaignAt cfg levels (n - 1)
         Nothing -> newCampaign cfg levels
@@ -51,7 +59,7 @@ main = do
         , wFx      = initialFx
         , wStepper = Stepper 0 emptyInput
         , wWindow  = (1280, 720)
-        , wScript  = if demo then campaignInputs cfg levels else []
+        , wScript  = demoScript
         , wStopAt  = stopAt
         , wTicks   = 0
         }

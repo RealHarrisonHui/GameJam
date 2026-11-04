@@ -9,6 +9,7 @@ module Game.Story
   , floorCountingRoom
   , floorGallery
   , floorMainspring
+  , floorEscapeWheel
   , endingLines
   , endingSignOff
   ) where
@@ -99,6 +100,21 @@ floorMainspring = NoteText
   , noteHint =
       [ "ONE CLOCK RULES BOTH WHEELS. WATCH THE GHOSTS BEFORE YOU LET GO."
       , "PAY THE SHAFT'S DEBT WHILE YOU WALK, THEN STOP THE LONG WHEEL."
+      ]
+  }
+
+floorEscapeWheel :: NoteText
+floorEscapeWheel = NoteText
+  { noteTitle = "THE ESCAPE WHEEL"
+  , noteBrief =
+      [ "THREE PINS HOLD THE ESCAPE WHEEL. PULL ALL THREE AND THE WAY UP OPENS."
+      , "TAKE THEM IN ANY ORDER YOU LIKE."
+      , "EVERY DOOR ANSWERS TO THE CLOCK. STOP THE CLOCK AND IT STAYS AS IT IS."
+      , "BORROW LITTLE. I NEVER MANAGED IT."
+      ]
+  , noteHint =
+      [ "BRAKE WHILE A DOOR IS OPEN AND IT STAYS OPEN."
+      , "THE LONG CORRIDOR COSTS THE MOST. LET THE WHEEL GET FAR AWAY FIRST."
       ]
   }
 

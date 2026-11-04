@@ -22,6 +22,7 @@ initialGame _ level = Game
   , gTicks    = 0
   , gBorrowed = 0
   , gHitBy    = Nothing
+  , gPins     = []
   , gQueued   = False
   }
 
@@ -50,10 +51,12 @@ stepGame cfg level input game = case gPhase game of
 -- | Update order within a playing tick. Later steps see the results of earlier ones:
 --
 -- 1. Temporal transition: input and debt give the new mode and clock.
--- 2. Player movement against walls, at a speed independent of the mode.
+-- 2. Player movement against walls and closed doors, at a speed independent of the mode.
 -- 3. Hazard motion: nothing to integrate, positions come from the new clock.
--- 4. Collision, swept over the whole tick. Contact means Lost.
--- 5. Exit, only if step 4 found no contact, so a loss beats a simultaneous win.
+-- 4. Collision, swept over the whole tick. Contact, or a door shutting on the
+--    player, means Lost.
+-- 5. Pins, then the exit, only if step 4 found no contact, so a loss beats a
+--    simultaneous win. The exit counts only once every pin is taken.
 simulate :: Config -> Level -> TickInput -> Game -> Game
 simulate cfg level input game =
   let time0 = gTime game
@@ -66,8 +69,20 @@ simulate cfg level input game =
       queued1 = held && tsMode time0 == Repaying
         && (queued || (tiFreezePressed input && tsDebt time0 <= cfgFreezeBuffer cfg))
       p0 = gPlayer game
-      p1 = moveWithWalls (lvlWalls level) (cfgPlayerRadius cfg) p0 (moveDelta cfg input)
+      radius = cfgPlayerRadius cfg
+      closed = closedGates level (tsClock time1)
+      -- A door the player already overlaps does not block, so nobody is wedged
+      -- against a door that shut on their shoulder: they can step clear of it.
+      blocking = filter (not . circleHitsRect radius p0) closed
+      p1 = moveWithWalls (lvlWalls level ++ blocking) radius p0 (moveDelta cfg input)
       hit = hazardHit cfg level (tsClock time0) (tsClock time1) p0 p1
+      crushed = any (circleHitsRect (radius - cfgDoorGrace cfg) p1) closed
+      newPins =
+        [ i | (i, pin) <- zip [0 ..] (lvlPins level)
+            , i `notElem` gPins game
+            , vDist p1 pin <= cfgPinReach cfg ]
+      pins1 = reverse newPins ++ gPins game
+      unlocked = length pins1 == length (lvlPins level)
       frozenNow = if tsClock time1 == tsClock time0 then 1 else 0
       moved = game
         { gPlayer   = p1
@@ -79,8 +94,9 @@ simulate cfg level input game =
   in case hit of
        Just index -> moved { gPhase = Lost, gHitBy = Just index }
        Nothing
-         | circleHitsRect (cfgPlayerRadius cfg) p1 (lvlExit level) -> moved { gPhase = Won }
-         | otherwise -> moved
+         | crushed -> moved { gPhase = Lost, gHitBy = Nothing }
+         | unlocked && circleHitsRect radius p1 (lvlExit level) -> moved { gPhase = Won, gPins = pins1 }
+         | otherwise -> moved { gPins = pins1 }
 
 -- | Did this tick restart or change screen? Then held keys are forgotten, so a
 -- key held across the change cannot leak into the next screen.
