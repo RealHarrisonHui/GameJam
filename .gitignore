@@ -1,9 +1,6 @@
 # Local toolchains and downloads
 /.tools/
 
-# Still in development - not ready to publish
-/borrowed-seconds/
-
 # Build output
 dist-newstyle/
 .stack-work/
