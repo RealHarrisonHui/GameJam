@@ -1,0 +1,332 @@
+[gd_scene load_steps=26 format=3]
+
+[ext_resource type="Script" path="res://scripts/game.gd" id="1"]
+[ext_resource type="Resource" path="res://resources/gameplay_config.tres" id="2"]
+[ext_resource type="Script" path="res://scripts/level.gd" id="3"]
+[ext_resource type="PackedScene" path="res://scenes/hazard.tscn" id="4"]
+[ext_resource type="PackedScene" path="res://scenes/player.tscn" id="5"]
+[ext_resource type="Script" path="res://scripts/effects.gd" id="6"]
+[ext_resource type="Script" path="res://scripts/clockwork.gd" id="7"]
+[ext_resource type="Script" path="res://scripts/exit_door.gd" id="8"]
+[ext_resource type="PackedScene" path="res://scenes/hud.tscn" id="9"]
+[ext_resource type="Shader" path="res://shaders/map.gdshader" id="10"]
+[ext_resource type="Shader" path="res://shaders/temporal_sprite.gdshader" id="11"]
+[ext_resource type="Shader" path="res://shaders/vault_light.gdshader" id="12"]
+[ext_resource type="Texture2D" path="res://assets/art/map_albedo.png" id="13"]
+[ext_resource type="Texture2D" path="res://assets/art/map_normal.png" id="14"]
+[ext_resource type="Texture2D" path="res://assets/art/dial_face.png" id="15"]
+[ext_resource type="Texture2D" path="res://assets/art/dial_minute.png" id="16"]
+[ext_resource type="Texture2D" path="res://assets/art/dial_hour.png" id="17"]
+[ext_resource type="Texture2D" path="res://assets/art/vault_ring.png" id="18"]
+[ext_resource type="Texture2D" path="res://assets/art/soft_light.png" id="19"]
+[ext_resource type="FontFile" path="res://assets/fonts/Limelight-Regular.ttf" id="20"]
+[ext_resource type="FontVariation" path="res://resources/font_body.tres" id="21"]
+[ext_resource type="Texture2D" path="res://assets/art/window_glass.png" id="22"]
+
+[sub_resource type="Environment" id="env"]
+background_mode = 3
+glow_enabled = true
+glow_intensity = 0.55
+glow_strength = 0.9
+glow_bloom = 0.0
+glow_blend_mode = 0
+glow_hdr_threshold = 1.05
+glow_hdr_scale = 1.6
+glow_levels/1 = 0.4
+glow_levels/2 = 0.6
+glow_levels/3 = 0.8
+glow_levels/4 = 0.4
+glow_levels/5 = 0.0
+
+[sub_resource type="CanvasTexture" id="map_tex"]
+diffuse_texture = ExtResource("13")
+normal_texture = ExtResource("14")
+
+[sub_resource type="ShaderMaterial" id="map_mat"]
+shader = ExtResource("10")
+
+[sub_resource type="ShaderMaterial" id="temporal_mat"]
+shader = ExtResource("11")
+
+[sub_resource type="ShaderMaterial" id="vault_mat"]
+shader = ExtResource("12")
+
+[sub_resource type="CanvasItemMaterial" id="additive"]
+blend_mode = 1
+light_mode = 1
+
+[sub_resource type="CanvasItemMaterial" id="unshaded"]
+light_mode = 1
+
+[sub_resource type="ParticleProcessMaterial" id="dust_mat"]
+particle_flag_disable_z = true
+emission_shape = 3
+emission_box_extents = Vector3(640, 325, 0)
+direction = Vector3(1, -0.4, 0)
+spread = 60.0
+initial_velocity_min = 2.0
+initial_velocity_max = 9.0
+gravity = Vector3(0, 0, 0)
+scale_min = 0.006
+scale_max = 0.014
+color = Color(1, 0.9, 0.7, 0.3)
+
+[sub_resource type="ParticleProcessMaterial" id="impact_mat"]
+particle_flag_disable_z = true
+emission_shape = 1
+emission_sphere_radius = 8.0
+direction = Vector3(1, 0, 0)
+spread = 180.0
+initial_velocity_min = 90.0
+initial_velocity_max = 340.0
+gravity = Vector3(0, 0, 0)
+damping_min = 240.0
+damping_max = 460.0
+scale_min = 0.012
+scale_max = 0.03
+color = Color(2.2, 1.5, 0.8, 1)
+
+[node name="Game" type="Node2D"]
+script = ExtResource("1")
+config = ExtResource("2")
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+environment = SubResource("env")
+
+[node name="Camera" type="Camera2D" parent="."]
+anchor_mode = 0
+
+[node name="World" type="Node2D" parent="."]
+
+[node name="Ambient" type="CanvasModulate" parent="World"]
+color = Color(0.6, 0.59, 0.6, 1)
+
+[node name="Level" type="Node2D" parent="World"]
+script = ExtResource("3")
+
+[node name="Map" type="Sprite2D" parent="World/Level"]
+z_index = -10
+material = SubResource("map_mat")
+scale = Vector2(0.5, 0.5)
+centered = false
+texture = SubResource("map_tex")
+
+[node name="Labels" type="Node2D" parent="World/Level"]
+
+[node name="Cartouche" type="Label" parent="World/Level/Labels"]
+material = SubResource("unshaded")
+offset_left = 92.0
+offset_top = 74.0
+offset_right = 518.0
+offset_bottom = 140.0
+theme_override_colors/font_color = Color(0.82, 0.65, 0.31, 1)
+theme_override_fonts/font = ExtResource("20")
+theme_override_font_sizes/font_size = 50
+text = "ARREARS"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="Motto" type="Label" parent="World/Level/Labels"]
+material = SubResource("unshaded")
+offset_left = 70.0
+offset_top = 598.0
+offset_right = 1080.0
+offset_bottom = 620.0
+theme_override_colors/font_color = Color(0.62, 0.49, 0.24, 0.9)
+theme_override_fonts/font = ExtResource("21")
+theme_override_font_sizes/font_size = 13
+text = "THE  HOUSE  LENDS  TIME.   THE  HOUSE  COLLECTS."
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="Grace" type="Label" parent="World/Level/Labels"]
+material = SubResource("unshaded")
+offset_left = 395.0
+offset_top = 292.0
+offset_right = 635.0
+offset_bottom = 362.0
+theme_override_colors/font_color = Color(0.13, 0.06, 0.02, 0.95)
+theme_override_fonts/font = ExtResource("20")
+theme_override_font_sizes/font_size = 50
+text = "GRACE"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="GraceNote" type="Label" parent="World/Level/Labels"]
+material = SubResource("unshaded")
+offset_left = 395.0
+offset_top = 360.0
+offset_right = 635.0
+offset_bottom = 386.0
+theme_override_colors/font_color = Color(0.13, 0.06, 0.02, 1.0)
+theme_override_fonts/font = ExtResource("21")
+theme_override_font_sizes/font_size = 16
+text = "Rest here while your debt clears"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="Hint1" type="Label" parent="World/Level/Labels"]
+material = SubResource("unshaded")
+offset_left = 46.0
+offset_top = 172.0
+offset_right = 234.0
+offset_bottom = 196.0
+theme_override_colors/font_color = Color(0.86, 0.92, 0.84, 0.82)
+theme_override_fonts/font = ExtResource("21")
+theme_override_font_sizes/font_size = 14
+text = "Hold SPACE: the wheel stops"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="Hint2" type="Label" parent="World/Level/Labels"]
+material = SubResource("unshaded")
+offset_left = 46.0
+offset_top = 194.0
+offset_right = 234.0
+offset_bottom = 218.0
+theme_override_colors/font_color = Color(0.86, 0.92, 0.84, 0.82)
+theme_override_fonts/font = ExtResource("21")
+theme_override_font_sizes/font_size = 13
+text = "Keep moving. Release when safe."
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="Hint3" type="Label" parent="World/Level/Labels"]
+material = SubResource("unshaded")
+offset_left = 362.0
+offset_top = 176.0
+offset_right = 590.0
+offset_bottom = 202.0
+theme_override_colors/font_color = Color(0.95, 0.87, 0.68, 0.95)
+theme_override_fonts/font = ExtResource("21")
+theme_override_font_sizes/font_size = 14
+text = "Stop the next wheel far off, then run"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="VaultLabel" type="Label" parent="World/Level/Labels"]
+material = SubResource("unshaded")
+offset_left = 1110.0
+offset_top = 170.0
+offset_right = 1240.0
+offset_bottom = 212.0
+theme_override_colors/font_color = Color(0.13, 0.07, 0.03, 1.0)
+theme_override_fonts/font = ExtResource("20")
+theme_override_font_sizes/font_size = 30
+text = "EXIT"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="Clockwork" type="Node2D" parent="World"]
+script = ExtResource("7")
+
+[node name="Dial" type="Node2D" parent="World/Clockwork"]
+position = Vector2(853, 330)
+
+[node name="Face" type="Sprite2D" parent="World/Clockwork/Dial"]
+material = SubResource("temporal_mat")
+scale = Vector2(0.48, 0.48)
+texture = ExtResource("15")
+
+[node name="Hour" type="Sprite2D" parent="World/Clockwork/Dial"]
+material = SubResource("temporal_mat")
+scale = Vector2(0.6, 0.6)
+texture = ExtResource("17")
+
+[node name="Minute" type="Sprite2D" parent="World/Clockwork/Dial"]
+material = SubResource("temporal_mat")
+scale = Vector2(0.6, 0.6)
+texture = ExtResource("16")
+
+[node name="Gears" type="Control" parent="World/Clockwork"]
+layout_mode = 3
+anchors_preset = 0
+clip_contents = true
+mouse_filter = 2
+
+[node name="Glass" type="Sprite2D" parent="World/Clockwork"]
+material = SubResource("unshaded")
+texture = ExtResource("22")
+
+[node name="ExitDoor" type="Node2D" parent="World"]
+position = Vector2(1175, 290)
+script = ExtResource("8")
+
+[node name="Mouth" type="Sprite2D" parent="World/ExitDoor"]
+material = SubResource("vault_mat")
+scale = Vector2(0.38, 0.38)
+texture = ExtResource("19")
+
+[node name="Ring" type="Sprite2D" parent="World/ExitDoor"]
+material = SubResource("unshaded")
+scale = Vector2(0.34, 0.34)
+texture = ExtResource("18")
+
+[node name="Lamps" type="Node2D" parent="World"]
+
+[node name="GraceLamp1" type="PointLight2D" parent="World/Lamps"]
+position = Vector2(430, 245)
+color = Color(1, 0.72, 0.4, 1)
+energy = 0.62
+texture = ExtResource("19")
+texture_scale = 1.15
+height = 70.0
+
+[node name="GraceLamp2" type="PointLight2D" parent="World/Lamps"]
+position = Vector2(600, 430)
+color = Color(1, 0.72, 0.4, 1)
+energy = 0.62
+texture = ExtResource("19")
+texture_scale = 1.15
+height = 70.0
+
+[node name="NicheLamp" type="PointLight2D" parent="World/Lamps"]
+position = Vector2(1064, 180)
+color = Color(1, 0.72, 0.4, 1)
+energy = 0.8
+texture = ExtResource("19")
+texture_scale = 0.4
+height = 40.0
+
+[node name="VaultLight" type="PointLight2D" parent="World/Lamps"]
+position = Vector2(1175, 290)
+color = Color(1, 0.82, 0.55, 1)
+energy = 0.9
+texture = ExtResource("19")
+texture_scale = 1.0
+height = 60.0
+
+[node name="Hazards" type="Node2D" parent="World"]
+
+[node name="Shuttle" parent="World/Hazards" instance=ExtResource("4")]
+
+[node name="Gallery" parent="World/Hazards" instance=ExtResource("4")]
+
+[node name="Player" parent="World" instance=ExtResource("5")]
+
+[node name="Effects" type="Node2D" parent="World"]
+script = ExtResource("6")
+
+[node name="Dust" type="GPUParticles2D" parent="World/Effects"]
+material = SubResource("additive")
+position = Vector2(640, 325)
+amount = 36
+lifetime = 9.0
+preprocess = 9.0
+fixed_fps = 30
+process_material = SubResource("dust_mat")
+texture = ExtResource("19")
+visibility_rect = Rect2(-700, -400, 1400, 800)
+
+[node name="Impact" type="GPUParticles2D" parent="World/Effects"]
+material = SubResource("additive")
+emitting = false
+amount = 28
+lifetime = 0.6
+one_shot = true
+explosiveness = 1.0
+process_material = SubResource("impact_mat")
+texture = ExtResource("19")
+visibility_rect = Rect2(-500, -500, 1000, 1000)
+
+[node name="HUD" parent="." instance=ExtResource("9")]

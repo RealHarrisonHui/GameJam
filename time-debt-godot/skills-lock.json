@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "skills": {
+    "godot-gdscript": {
+      "source": "gamedev-skills/awesome-gamedev-agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/godot/godot-gdscript/SKILL.md",
+      "computedHash": "1faa18f58a46c2b45a89e4d3c2b0e6c6fe571dd1c353851ca9f56d02e85dd5b4"
+    },
+    "godot-shaders": {
+      "source": "gamedev-skills/awesome-gamedev-agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/godot/godot-shaders/SKILL.md",
+      "computedHash": "dda008809b7621e19bfef1da06e8314de509a31933d0d46b9cda6aa1c5a056c9"
+    }
+  }
+}

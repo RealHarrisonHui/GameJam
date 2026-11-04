@@ -1,0 +1,51 @@
+cabal-version:      2.4
+name:               escapement
+version:            0.1.0.0
+synopsis:           Time Debt prototype: borrow seconds from the world, then repay them.
+license:            NONE
+build-type:         Simple
+extra-doc-files:    README.md
+
+common shared
+  default-language: Haskell2010
+  ghc-options:      -Wall -O2
+
+-- The pure core. It has no graphics dependency, so `cabal test` needs no
+-- working OpenGL/GLUT and the core cannot import Gloss by accident.
+library
+  import:           shared
+  hs-source-dirs:   src
+  exposed-modules:  Game.Types
+                    Game.TimeDebt
+                    Game.Collision
+                    Game.Level
+                    Game.Logic
+                    Game.Input
+                    Game.Fx
+                    Game.Solution
+  build-depends:    base >=4.18 && <5
+
+executable escapement
+  import:           shared
+  hs-source-dirs:   app
+  main-is:          Main.hs
+  other-modules:    Art
+                    Render
+  build-depends:    base >=4.18 && <5, escapement, gloss ==1.13.*
+  ghc-options:      -threaded
+
+test-suite spec
+  import:           shared
+  type:             exitcode-stdio-1.0
+  hs-source-dirs:   test
+  main-is:          Main.hs
+  build-depends:    base >=4.18 && <5, escapement
+
+-- Exhaustive-ish search over the real stepGame. Slower, so it is separate:
+--   cabal test probe --test-show-details=direct
+test-suite probe
+  import:           shared
+  type:             exitcode-stdio-1.0
+  hs-source-dirs:   test
+  main-is:          Probe.hs
+  build-depends:    base >=4.18 && <5, escapement, array

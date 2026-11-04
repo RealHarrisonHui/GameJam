@@ -1,0 +1,15 @@
+[gd_resource type="Resource" script_class="GameplayConfig" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/gameplay_config.gd" id="1"]
+
+[resource]
+script = ExtResource("1")
+max_debt_ticks = 180
+player_speed = 3.25
+player_radius = 13.0
+hazard_radius = 28.0
+contact_grace = 3.0
+shuttle_one_way = 15
+shuttle_phase = 0
+gallery_one_way = 90
+gallery_phase = 40
