@@ -1,4 +1,4 @@
--- | Draws the game. Reads 'Game' and 'Fx'; changes neither.
+-- | Draws the game. Reads 'Campaign' and 'Fx'; changes neither.
 module Render
   ( Scene
   , mkScene
@@ -6,16 +6,18 @@ module Render
   ) where
 
 import Art
+import Game.Campaign
 import Game.Fx
 import Game.Level
+import Game.Story
 import Game.TimeDebt (canFreeze)
 import Game.Types
 import Graphics.Gloss
 import Text.Printf (printf)
 
--- | Geometry built once, so a frame only pays for drawing it.
+-- | Geometry built once per floor, so a frame only pays for drawing it.
 data Scene = Scene
-  { scBed        :: Picture  -- ^ machine plate and engraving
+  { scBed        :: Picture  -- ^ machine plate
   , scFloors     :: Picture  -- ^ walkable space, with its outline
   , scFloorShape :: Picture  -- ^ the same floors, uncoloured, for mode tints
   , scRails      :: [Picture]
@@ -25,9 +27,9 @@ data Scene = Scene
   , scWheel      :: Picture
   , scWheelCold  :: Picture
   , scExitMark   :: Picture
-  , scChevrons   :: Picture
   , scModeHud    :: Picture
   , scTitle      :: Picture
+  , scBrief      :: Picture
   , scReduced    :: Bool
   }
 
@@ -42,8 +44,8 @@ rectPic grow rect =
   let (l, b, r, t) = rectF rect
   in quad (l - grow) (b - grow) (r + grow) (t + grow)
 
-mkScene :: Config -> Level -> Scene
-mkScene cfg level = Scene
+mkScene :: Config -> Int -> Int -> Level -> Scene
+mkScene cfg floorNumber floorCount level = Scene
   { scBed = bed
   , scFloors = floors
   , scFloorShape = Pictures (map (rectPic 0) (lvlFloors level))
@@ -52,11 +54,11 @@ mkScene cfg level = Scene
   , scFrostEdge = frostEdge
   , scGears = gears
   , scWheel = escapeWheelPic ember emberDeep (blend 0.4 ember cream) 12 hazardR
-  , scWheelCold = escapeWheelPic (blend 0.25 ember cream) (blend 0.45 emberDeep frostDeep) frost 12 hazardR
+  , scWheelCold = escapeWheelPic ember (blend 0.45 emberDeep frostDeep) frost 12 hazardR
   , scExitMark = exitMark
-  , scChevrons = chevrons
   , scModeHud = hudPlate
   , scTitle = titleCard
+  , scBrief = briefCard
   , scReduced = cfgReducedEffects cfg
   }
   where
@@ -68,55 +70,57 @@ mkScene cfg level = Scene
       , Color (withA 0.5 plateHi) (Pictures
           [ quad (-640) y 640 (y + 1) | y <- [-290, -210 .. 360] ])
       , Color brassDim (Pictures [ ringAt x y 3 1.4 | (x, y) <- bolts ])
-      , at (-270) (-214) (Color (withA 0.85 brass) (label 40 "ESCAPEMENT"))
-      , at (-270) (-246) (Color brassDim (label 12 "BORROW TIME. REPAY IT."))
       ]
     bolts = [ (x, y) | x <- [-622, 622], y <- [-272, 340] ]
     floorShapes grow = Pictures (map (rectPic grow) (lvlFloors level))
     floors = Pictures
-      [ Color ink (floorShapes 9)
-      , Color brassDim (floorShapes 3)
-      , Color floorTone (floorShapes 0)
-      , Color floorLine (Pictures (concatMap floorGrid (lvlFloors level)))
-      , zoneTint (lvlStartArea level) brass 0.05
-      , zoneTint (lvlSafeArea level) verdigris 0.16
-      , zoneTint (lvlRefuge level) verdigris 0.26
-      , zoneTint (Rect 470 (-20) 600 200) verdigris 0.13
-      , stillRoomMarks
-      , startMarks
-      , refugeMarks
-      ]
+      ( [ Color ink (floorShapes 9)
+        , Color brassDim (floorShapes 3)
+        , Color floorTone (floorShapes 0)
+        , Color floorLine (Pictures (concatMap floorGrid (lvlFloors level)))
+        , zoneTint (lvlStartArea level) brass 0.05
+        , startMarks
+        ] ++ map zoneMarks (lvlZones level))
     zoneTint rect c alpha = Color (withA alpha c) (rectPic 0 rect)
     floorGrid rect =
       let (l, b, r, t) = rectF rect
       in [ quad x b (x + 1) t | x <- steps l r ] ++ [ quad l y r (y + 1) | y <- steps b t ]
     steps lo hi = takeWhile (< hi - 20) [lo + 80, lo + 160 ..]
-    stillRoomMarks =
-      let (l, b, r, t) = rectF (lvlSafeArea level)
+    -- Large rooms carry their name on the floor; small refuges carry it beneath.
+    zoneMarks (Zone rect name sub) =
+      let (l, b, r, t) = rectF rect
           cx = (l + r) / 2
           cy = (b + t) / 2
-      in Pictures
-        [ at cx cy (Color (withA 0.40 verdigris) (Pictures
-            [ ThickCircle 88 2, ThickCircle 58 1.5, tickRing 12 3 98 7 13 2 ]))
-        , at cx (cy + 12) (Color verdigris (label 19 "STILL ROOM"))
-        , at cx (cy - 14) (Color (withA 0.9 verdigris) (label 11 "SAFE AT ANY SPEED"))
-        , Color verdigris (boxLines 2 (l + 8) (b + 8) (r - 8) (t - 8))
-        ]
+          large = r - l >= 120
+      in if large
+        then Pictures
+          [ zoneTint rect verdigris 0.16
+          , if null name then Blank else Pictures
+              [ if r - l >= 240
+                  then at cx cy (Color (withA 0.40 verdigris) (Pictures
+                         [ ThickCircle 88 2, ThickCircle 58 1.5, tickRing 12 3 98 7 13 2 ]))
+                  else Blank
+              , at cx (cy + 12) (Color verdigris (label 19 name))
+              , at cx (cy - 14) (Color (withA 0.9 verdigris) (label 11 sub))
+              , Color verdigris (boxLines 2 (l + 8) (b + 8) (r - 8) (t - 8))
+              ]
+          ]
+        else Pictures
+          [ zoneTint rect verdigris 0.26
+          , Color verdigris (quad l t r (t + 2))
+          , at cx (b - 16) (Color verdigris (label 9 name))
+          , Color (withA 0.6 verdigris) (Pictures
+              [ thickSeg 2 (x, t - 10) (x + 8, t - 2) | x <- [l + 4, l + 16 .. r - 12] ])
+          ]
     startMarks =
       let (l, b, r, t) = rectF (lvlStartArea level)
+          (sx, sy) = v2 (lvlStart level)
       in Pictures
         [ Color (withA 0.8 brass) (boxLines 2 (l + 8) (b + 8) (r - 8) (t - 8))
         , at ((l + r) / 2) (b + 26) (Color brass (label 19 "START"))
         , Color (withA 0.55 brass) (Pictures
-            [ at x 70 (chevron 3 9) | x <- [-475, -448, -421] ])
-        ]
-    refugeMarks =
-      let (l, b, r, _) = rectF (lvlRefuge level)
-      in Pictures
-        [ Color verdigris (quad l 214 r 216)
-        , at ((l + r) / 2) (b - 16) (Color verdigris (label 9 "REFUGE"))
-        , Color (withA 0.6 verdigris) (Pictures
-            [ thickSeg 2 (x, 204) (x + 8, 212) | x <- [l + 4, l + 16 .. r - 12] ])
+            [ at x sy (chevron 3 9)
+            | x <- takeWhile (< r - 12) [sx + 45, sx + 72, sx + 99] ])
         ]
     railPic route =
       let points = map v2 (routePoints route)
@@ -136,14 +140,11 @@ mkScene cfg level = Scene
         , Color brass (Pictures
             [ thickSeg 3 (offset (-13) p) (offset 13 p) | p <- [a, b] ])
         ]
-    chevrons = Pictures [ at (fromIntegral i * 60) 0 (chevron 3 7) | i <- [0 .. 9 :: Int] ]
     dialFace = Pictures
-      [ Color plateHi (circleSolid 150)
-      , Color ink (circleSolid 136)
-      , Color brass (ThickCircle 136 3)
-      , Color brass (tickRing 36 3 130 6 13 2)
-      , Color brassDim (ThickCircle 96 1.5)
-      , Color brassDim (at 0 (-44) (label 10 "HAZARD CLOCK"))
+      [ Color plateHi (circleSolid 30)
+      , Color ink (circleSolid 26)
+      , Color brass (ThickCircle 26 2)
+      , Color brass (tickRing 12 3 22 3 5 1.5)
       ]
     frostEdge = Pictures
       [ at x y (Rotate rot corner)
@@ -153,13 +154,8 @@ mkScene cfg level = Scene
       , thickSeg 2 (10, 0) (10, -14), thickSeg 2 (0, -10) (14, -10)
       , thickSeg 2 (26, 0) (26, -10), thickSeg 2 (0, -26) (10, -26) ]
     gears =
-      [ (-575, -210, 1.6, gearPic 14 50 42)
-      , (-8, -214, -1.2, gearPic 16 66 57)
-      , (88, -234, 2.2, gearPic 9 39 31)
-      , (540, -86, 0.8, gearPic 16 62 53)
-      , (410, -210, -1.0, gearPic 18 74 64)
-      , (514, -222, 2.0, gearPic 9 39 31)
-      ]
+      [ (realToFrac x, realToFrac y, realToFrac rate, gearPic teeth (realToFrac outer) (realToFrac inner))
+      | (x, y, rate, teeth, outer, inner) <- lvlCogs level ]
     exitMark = Pictures
       [ Color verdigris (ThickCircle 34 3)
       , Color (withA 0.55 verdigris) (ThickCircle 24 2)
@@ -170,25 +166,25 @@ mkScene cfg level = Scene
       , Color brassDim (quad (-640) (-290) 640 (-288))
       ]
     titleCard = Pictures
-      [ Color (withA 0.88 ink) (quad (-640) (-360) 640 360)
-      , at 0 40 (Color (withA 0.16 brass) (tickRing 36 3 330 8 22 3))
-      , at 0 40 (Color (withA 0.10 brass) (ThickCircle 330 3))
-      , at 0 214 (Color brass (label 74 "ESCAPEMENT"))
-      , at 0 168 (Color cream (label 17 "YOU CAN STOP DANGER NOW,"))
-      , at 0 140 (Color cream (label 17 "BUT THE WORLD RECLAIMS EVERY SECOND YOU BORROW."))
-      , modeLine 72 (Color brass (normalIcon 17)) "NORMAL" brass "WHEELS TURN AT 1X. THEY KILL ON TOUCH."
-      , modeLine 22 (Color frost (frozenIcon 17)) "FROZEN" frost "HOLD SPACE. WHEELS STOP AND DEBT GROWS, 3 SECONDS AT MOST."
-      , modeLine (-28) (Color ember (repayIcon 17)) "REPAYING" ember "LET GO. WHEELS RUN AT 2X UNTIL THE DEBT IS PAID. NO FREEZING."
-      , Color brassDim (quad (-360) (-72) 360 (-70))
-      , at 0 (-104) (Color cream (label 14 "WASD OR ARROWS MOVE     HOLD SPACE FREEZE"))
-      , at 0 (-132) (Color cream (label 14 "P PAUSE     R RESTART     ESC QUIT"))
-      , at 0 (-160) (Color (withA 0.8 verdigris) (label 14 "A STOPPED WHEEL STILL CUTS.  REACH THE EXIT."))
-      ]
-    modeLine y icon name c detail = Pictures
-      [ at (-500) (y + 8) icon
-      , at (-474) y (Color c (labelL 19 name))
-      , at (-300) (y + 2) (Color cream (labelL 13.5 detail))
-      ]
+      ( [ Color (withA 0.88 ink) (quad (-640) (-360) 640 360)
+        , at 0 40 (Color (withA 0.16 brass) (tickRing 36 3 330 8 22 3))
+        , at 0 40 (Color (withA 0.10 brass) (ThickCircle 330 3))
+        , at 0 120 (Color brass (label 74 gameTitle))
+        ]
+        ++ [ at 0 (58 - 30 * fromIntegral i) (Color cream (label 17 line))
+           | (i, line) <- zip [0 :: Int ..] gameTagline ]
+        ++ [ at 0 (-104) (Color cream (label 14 "WASD OR ARROWS MOVE     HOLD SPACE BRAKE"))
+           , at 0 (-132) (Color cream (label 14 "P PAUSE     R RESTART     ESC QUIT"))
+           ])
+    briefCard = Pictures
+      ( [ Color (withA 0.94 ink) (quad (-640) (-360) 640 360)
+        , at 0 40 (Color (withA 0.10 brass) (tickRing 36 3 330 8 22 3))
+        , at 0 232 (Color brassDim (label 15 (printf "FLOOR %d OF %d" floorNumber floorCount)))
+        , at 0 165 (Color brass (label 40 (lvlTitle level)))
+        , Color brassDim (quad (-300) 142 300 144)
+        ]
+        ++ [ at 0 (95 - 40 * fromIntegral i) (Color cream (label 17 line))
+           | (i, line) <- zip [0 :: Int ..] (lvlBrief level) ])
 
 -- | Mode icons: shape alone tells the modes apart.
 normalIcon, frozenIcon, repayIcon :: Float -> Picture
@@ -199,8 +195,8 @@ repayIcon s = Pictures
   [ Polygon [(-s, -s * 0.8), (0, 0), (-s, s * 0.8)], Polygon [(0, -s * 0.8), (s, 0), (0, s * 0.8)] ]
 
 -- | The window keeps the 16:9 picture: scale to fit, then cover the bars.
-render :: Config -> Level -> Scene -> Game -> Fx -> (Int, Int) -> Picture
-render cfg level scene game fx (winW, winH) =
+render :: Config -> [Level] -> [Scene] -> Campaign -> Fx -> (Int, Int) -> Picture
+render cfg levels scenes campaign fx (winW, winH) =
   let w = fromIntegral winW :: Float
       h = fromIntegral winH :: Float
       k = min (w / 1280) (h / 720)
@@ -211,33 +207,66 @@ render cfg level scene game fx (winW, winH) =
         , quad (w / 2 - barX) (-h / 2) (w / 2) (h / 2)
         , quad (-w / 2) (-h / 2) (w / 2) (-h / 2 + barY)
         , quad (-w / 2) (h / 2 - barY) (w / 2) (h / 2) ])
-  in Pictures [Scale k k (frame cfg level scene game fx), bars]
+      index = cIndex campaign
+      picture = screen cfg (levels !! index) (scenes !! index) campaign fx
+  in Pictures [Scale k k picture, bars]
 
-frame :: Config -> Level -> Scene -> Game -> Fx -> Picture
-frame cfg level scene game fx
-  | gPhase game == Title = Pictures [scBed scene, gearsLayer, overlay]
-  | otherwise = Pictures
+screen :: Config -> Level -> Scene -> Campaign -> Fx -> Picture
+screen cfg level scene campaign fx = case cScreen campaign of
+  OnTitle -> Pictures
+    [ scBed scene, scTitle scene
+    , at 0 (-228) (Color (pulseBrass 0.06) (label 24 "PRESS ENTER"))
+    , if scReduced scene then Blank
+        else at 0 40 (Color (withA 0.3 brass) (Rotate (tick * 2) (thickSeg 3 (0, 0) (0, 320))))
+    ]
+  OnBrief -> Pictures
+    [ scBed scene, scBrief scene
+    , at 0 (-228) (Color (pulseBrass 0.06) (label 20 "PRESS ENTER"))
+    ]
+  OnEnding -> Pictures
+    ( [ scBed scene
+      , Color (withA 0.94 ink) (quad (-640) (-360) 640 360)
+      , at 0 40 (Color (withA 0.14 verdigris) (tickRing 36 3 330 8 22 3))
+      , at 0 200 (Color verdigris (label 46 (head endingLines)))
+      ]
+      ++ [ at 0 (130 - 42 * fromIntegral i) (Color cream (label 17 line))
+         | (i, line) <- zip [0 :: Int ..] (drop 1 endingLines) ]
+      ++ [ at 0 20 (Color brass (label 15 endingSignOff))
+         , at 0 (-70) (Color cream (label 15 (printf "OUT IN %.1f S.   BORROWED %.1f S.   CAUGHT %d TIMES."
+             (secondsOf (cTotalTicks campaign)) (secondsOf (cBorrowed campaign)) (cTotalDeaths campaign))))
+         , at 0 (-228) (Color (pulseBrass 0.06) (label 20 "ENTER TO BEGIN AGAIN"))
+         ])
+  InFloor -> floorFrame cfg level scene campaign fx
+  where
+    tick = fromIntegral (fxTick fx) :: Float
+    pulseBrass rate = withA (0.75 + 0.25 * sin (tick * rate)) brass
+    secondsOf n = fromIntegral n / fromIntegral (cfgTicksPerSecond cfg) :: Double
+
+floorFrame :: Config -> Level -> Scene -> Campaign -> Fx -> Picture
+floorFrame cfg level scene campaign fx = Pictures
   [ scBed scene
   , gearsLayer
-  , scDialAt
   , scFloors scene
   , Color (withA (0.34 * frostF) frostDeep) (scFloorShape scene)
   , Color (withA (0.13 * strainF) ember) (scFloorShape scene)
   , Pictures (scRails scene)
   , repayStreaks
   , exitPad
-  , hints
+  , notePanel
   , trails
+  , ghosts
   , Pictures (zipWith hazardPic (lvlHazardsPositions) [0 :: Int ..])
   , playerPic
   , sparks
   , rings
   , Color (withA (0.9 * frostF) frost) (scFrostEdge scene)
   , strainEdges
+  , promptPic
   , hud
   , overlay
   ]
   where
+    game = cGame campaign
     time = gTime game
     mode = tsMode time
     clock = fromIntegral (tsClock time) :: Float
@@ -248,6 +277,7 @@ frame cfg level scene game fx
     reduced = scReduced scene
     moving = not reduced
     lvlHazardsPositions = hazardPositions level (tsClock time)
+    nearCap = tsDebt time >= cfgMaxDebt cfg - 45 && mode == Frozen
     -- The machine stays quiet behind the play: tinted, but well below the wheels.
     machineTint = blend strainF (blend frostF (blend 0.5 plateHi brassDim) (blend 0.45 plateHi frostDeep))
                     (blend 0.42 plateHi emberDeep)
@@ -255,34 +285,27 @@ frame cfg level scene game fx
     gearsLayer = Color machineTint (Pictures
       [ at x y (Rotate (clock * rate) cog) | (x, y, rate, cog) <- scGears scene ])
 
-    -- The dial's hand is the hazard clock itself: one turn per gallery cycle.
-    scDialAt = at 213 30 (Pictures
-      [ scDial scene
-      , Color (blend strainF (blend frostF brass frost) ember)
-          (Rotate (clock * 2) (thickSeg 5 (0, -22) (0, 118)))
-      , Color cream (circleSolid 8)
-      , Color (blend strainF (blend frostF brass frost) ember) (at 0 (-84) (label 24 rateText))
-      , if mode == Frozen then Color frost (at 0 34 (frozenIcon 18)) else Blank
-      ])
-    rateText = case mode of
-      Normal   -> "1X"
-      Frozen   -> "0X"
-      Repaying -> "2X"
-
-    -- Streaks along the rails while repaying, moving with the wheel's direction.
+    -- Streaks along every rail while repaying, moving with each wheel.
     repayStreaks
       | strainF < 0.02 || reduced = Blank
-      | otherwise =
-          let offsetX = fromIntegral ((fxTick fx * 7) `mod` 60)
-              c = withA (0.65 * strainF) ember
-              gallery = at (if galleryEast then -40 + offsetX else 540 - offsetX) 260
-                          (Rotate (if galleryEast then 0 else 180) (scChevrons scene))
-          in Color c gallery
-    galleryEast =
-      let route = hazardRoute (lvlHazards level !! 1)
-          Vec a _ = routePosition route (tsClock time)
-          Vec b _ = routePosition route (tsClock time + 1)
-      in b > a
+      | otherwise = Color (withA (0.65 * strainF) ember) (Pictures (map streak (lvlHazards level)))
+    streak (Hazard route) =
+      let Vec x0 y0 = routePosition route (tsClock time)
+          Vec x1 y1 = routePosition route (tsClock time + 1)
+          (ax, ay) = v2 (head (routePoints route))
+          (bx, by) = v2 (last (routePoints route))
+          len = sqrt ((bx - ax) ^ (2 :: Int) + (by - ay) ^ (2 :: Int))
+          forward = (x1 - x0) * realToFrac (bx - ax) + (y1 - y0) * realToFrac (by - ay) >= 0
+          u = (bx - ax) / len
+          v = (by - ay) / len
+          angle = negate (atan2 v u) * 180 / pi + (if forward then 0 else 180)
+          shift = fromIntegral ((fxTick fx * 7) `mod` 60) :: Float
+          travel d = if forward then d + shift else len - d - shift
+      in Pictures
+           [ at (ax + u * t) (ay + v * t) (Rotate angle (chevron 3 7))
+           | d <- [0, 60 .. len - 60]
+           , let t = travel d
+           , t >= 0, t <= len ]
 
     exitPad =
       let (l, b, r, t) = rectF (lvlExit level)
@@ -304,11 +327,26 @@ frame cfg level scene game fx
       , i `mod` 2 == 1
       , let (x, y) = v2 p ]
 
+    -- Where each wheel lands when the debt clears: the cost, drawn in the world.
+    ghosts
+      | not (cfgGhost cfg && lvlGhosts level) || tsDebt time == 0 || gPhase game /= Playing = Blank
+      | otherwise =
+          let c = if mode == Frozen then frost else ember
+              r = realToFrac (cfgHazardRadius cfg) :: Float
+          in Pictures
+               [ at x y (Pictures
+                   [ Color (withA 0.16 c) (circleSolid r)
+                   , Color (withA 0.85 c) (ThickCircle r 2)
+                   , Color (withA 0.85 c) (Pictures [ Rotate a (at 0 r (quad (-3) (-5) 3 5)) | a <- [0, 45 .. 315] ])
+                   ])
+               | p <- settledPositions level time
+               , let (x, y) = v2 p ]
+
     hazardPic pos i =
       let (x, y) = v2 pos
           route = hazardRoute (lvlHazards level !! i)
           period = fromIntegral (routePeriod route) :: Float
-          spin = negate (clock * 720 / period) * (if i == 0 then 0.5 else 1)
+          spin = negate (clock * 720 / period) * (if period < 60 then 0.5 else 1)
           r = realToFrac (cfgHazardRadius cfg) :: Float
       in at x y (Pictures
            [ glow (blend frostF ember frost) r (0.5 + 0.25 * strainF)
@@ -330,6 +368,7 @@ frame cfg level scene game fx
           stretch = realToFrac (fxMotion fx) * 0.1 :: Float
           debtFrac = fromIntegral (tsDebt time) / fromIntegral (cfgMaxDebt cfg) :: Float
           arcColor = if mode == Frozen then frost else ember
+          capPulse = 0.5 + 0.5 * sin (tick * 0.4)
       in at x y (Pictures
            [ glow cream r 0.55
            , Rotate angle (Scale (1 + stretch) (1 - stretch) (Pictures
@@ -342,6 +381,14 @@ frame cfg level scene game fx
                  [ Color (withA 0.35 ink) (ThickCircle (r + 8) 5)
                  , Color arcColor (Rotate (-90) (ThickArc 0 (360 * debtFrac) (r + 8) 5))
                  ]
+               else Blank
+           -- The brake is locked: the same cross as the panel, beside the player.
+           , if mode == Repaying
+               then at (r + 20) (r + 12) (Color ember (Pictures
+                      [ thickSeg 2.5 (-5, -5) (5, 5), thickSeg 2.5 (-5, 5) (5, -5) ]))
+               else Blank
+           , if nearCap
+               then Color (withA (0.45 + 0.55 * capPulse) ember) (ThickCircle (r + 16 + 3 * capPulse) 3)
                else Blank
            ])
 
@@ -359,6 +406,7 @@ frame cfg level scene game fx
             (c, reachPx) = case rgKind ring of
               RingFreeze  -> (frost, 180)
               RingRelease -> (ember, 120)
+              RingCleared -> (verdigris, 110)
               RingImpact  -> (ember, 70)
               RingWin     -> (verdigris, 150)
             radius = 16 + reachPx * (1 - (1 - u) * (1 - u)) ]
@@ -374,14 +422,31 @@ frame cfg level scene game fx
                [ at (x + offset) 351 (chevron 3 5) | x <- [-640, -600 .. 600] ]
                ++ [ at (x + offset) (-280) (chevron 3 5) | x <- [-640, -600 .. 600] ])
 
-    -- Context hints, in the panel above the rooms.
-    hints =
-      let (a, b) = hintLines level game
-      in at (-576) 288 (Pictures
-           [ Color modeColor (at 0 (-30) (labelL 12.5 a))
-           , Color (withA 0.85 cream) (at 0 (-54) (labelL 12.5 b))
-           , Color brassDim (at 0 (-8) (labelL 9.5 "FOREMAN'S NOTE"))
+    -- Teaching beside the player, so the eye stays on the action. A forced release
+    -- is warned about on every floor; everything else only where a floor teaches it.
+    promptPic
+      | gPhase game /= Playing = Blank
+      | nearCap = promptAt "CAP NEAR: LET GO"
+      | not (cfgHints cfg) = Blank
+      | otherwise = maybe Blank promptAt (activePrompt level game)
+    promptAt line =
+      let (x, y) = v2 (gPlayer game)
+          w = labelWidth 12.5 line
+          px = max (w / 2 - 620) (min (620 - w / 2) x)
+          py = min 340 (y + 38)
+      in at px py (Pictures
+           [ Color (withA 0.82 ink) (quad (-w / 2 - 8) (-6) (w / 2 + 8) 19)
+           , Color modeColor (label 12.5 line)
            ])
+
+    -- The floor's name, with a hint only once the player has failed here twice.
+    notePanel =
+      let (x, y) = v2 (lvlNoteAt level)
+          hintLines = if cfgHints cfg && hintsDue campaign then lvlHint level else []
+      in at x y (Pictures
+           ( Color brassDim (at 0 (-8) (labelL 11 (lvlTitle level)))
+           : [ Color (if i == 0 then modeColor else withA 0.85 cream) (at 0 (-32 - 22 * fromIntegral i) (labelL 12 line))
+             | (i, line) <- zip [0 :: Int ..] hintLines ]))
     modeColor = case mode of
       Normal   -> brass
       Frozen   -> frost
@@ -390,9 +455,18 @@ frame cfg level scene game fx
     hud = Pictures
       [ scModeHud scene
       , modePlate
+      , dial
       , meter
       , debtPlate
       ]
+
+    -- The hazard clock, one turn per 180 ticks, shrunk into the panel.
+    dial = at (-322) (-325) (Pictures
+      [ scDial scene
+      , Color (blend strainF (blend frostF brass frost) ember)
+          (Rotate (clock * 2) (thickSeg 3 (0, -4) (0, 20)))
+      , Color cream (circleSolid 3)
+      ])
 
     modePlate =
       let icon = case mode of
@@ -430,7 +504,6 @@ frame cfg level scene game fx
                      | x <- takeWhile (< fill - 14) [l + 4 - phase + 22, l + 26 - phase + 22 ..]
                      , x > l ])
           notch x = Color brass (quad (x - 1) (b - 4) (x + 1) (t + 2))
-          nearCap = tsDebt time >= cfgMaxDebt cfg - 45 && mode == Frozen
       in Pictures
            [ Color plate (quad l b r t)
            , Color fillC (quad l b fill t)
@@ -443,16 +516,15 @@ frame cfg level scene game fx
                [ at x (-353) (label 9.5 s)
                | (x, s) <- [(l, "0"), (l + (r - l) / 3, "1"), (l + (r - l) * 2 / 3, "2"), (r, "3 S")] ])
            , at l (-303) (Color brassDim (labelL 9.5 "TIME DEBT"))
-           , if nearCap then at r (-303) (Color ember (labelR 9.5 "CAP NEAR: FORCED RELEASE")) else Blank
            ]
 
     debtPlate =
       let seconds = fromIntegral (tsDebt time) / fromIntegral (cfgTicksPerSecond cfg) :: Double
           ready = canFreeze time
           (status, statusC) = case mode of
-            Normal   -> ("FREEZE READY", verdigris)
-            Frozen   -> ("FREEZE HELD", frost)
-            Repaying -> ("FREEZE LOCKED", ember)
+            Normal   -> ("BRAKE READY", verdigris)
+            Frozen   -> ("BRAKE HELD", frost)
+            Repaying -> ("BRAKE LOCKED", ember)
           lamp | ready     = Color verdigris (diamond 8)
                | mode == Frozen = Color frost (diamond 8)
                | otherwise = Color ember (Pictures [ thickSeg 2 (-6, -6) (6, 6), thickSeg 2 (-6, 6) (6, -6) ])
@@ -465,22 +537,15 @@ frame cfg level scene game fx
            ]
 
     overlay = case gPhase game of
-      Title -> Pictures
-        [ scTitle scene
-        , at 0 (-228) (Color (withA (0.75 + 0.25 * sin (tick * 0.06)) brass) (label 24 "PRESS ENTER"))
-        , if moving
-            then at 0 40 (Color (withA 0.3 brass) (Rotate (tick * 2) (thickSeg 3 (0, 0) (0, 320))))
-            else Blank
-        ]
       Paused -> banner frost "PAUSED" "P TO RESUME    R TO RESTART"
         (if mode == Frozen && tsDebt time > 0
-           then "A FREEZE DOES NOT SURVIVE A PAUSE: THE DEBT FALLS DUE ON RESUME."
+           then "A BRAKE DOES NOT SURVIVE A PAUSE: THE DEBT FALLS DUE ON RESUME."
            else "THE CLOCK AND THE DEBT ARE HOLDING.")
       Lost -> banner ember "CAUGHT" "ENTER OR R TO RETRY" (lossReason mode)
-      Won -> banner verdigris "ESCAPED" "ENTER TO RUN IT AGAIN"
-        (printf "OUT IN %.1f S, HAVING BORROWED %.1f S IN ALL."
+      Won -> banner verdigris (lvlTitle level) "ENTER TO CLIMB ON"
+        (printf "CLEARED IN %.1f S, HAVING BORROWED %.1f S."
            (secondsOf (gTicks game)) (secondsOf (gBorrowed game)))
-      Playing -> Blank
+      _ -> Blank
     secondsOf n = fromIntegral n / fromIntegral (cfgTicksPerSecond cfg) :: Double
 
     -- A band, not a full-screen wash, so the wheel that got you stays visible.
@@ -504,33 +569,7 @@ lossReason :: TemporalMode -> String
 lossReason mode = case mode of
   Normal   -> "THE WHEEL FOUND YOU. HOLD SPACE TO STOP IT FIRST."
   Frozen   -> "A STOPPED WHEEL STILL CUTS. WALK AROUND IT."
-  Repaying -> "THE DEBT CAME DUE. LET GO ONLY WHERE THE WHEEL CANNOT REACH."
+  Repaying -> "THE DEBT CAME DUE. WATCH WHERE THE GHOST LANDS BEFORE YOU LET GO."
 
 clamp01 :: Float -> Float
 clamp01 = max 0 . min 1
-
--- | Two short lines that fit where the player is and what the clock is doing.
-hintLines :: Level -> Game -> (String, String)
-hintLines level game
-  | inStart && mode == Normal = ("TOO FAST TO DODGE.", "HOLD SPACE, THEN WALK AROUND IT.")
-  | inSafe && mode == Repaying = ("THIS ROOM IS SAFE. WAIT OUT THE DEBT.", "NO FREEZE UNTIL THE METER EMPTIES.")
-  | inSafe && mode == Frozen = ("THROUGH. LET GO OF SPACE.", "EVERY SECOND HELD MUST BE REPAID.")
-  | inSafe = ("THE NORTH DOOR LEADS TO THE GALLERY.", "FOLLOW THE WHEEL. STOP IT AS IT TURNS.")
-  | inRefuge && mode == Normal = ("WAIT FOR THE WHEEL TO PASS WEST,", "THEN RUN FOR THE EXIT DOOR.")
-  | inRefuge && mode == Frozen = ("CLEAR OF THE WHEEL. LET GO.", "IT WILL PASS YOU AT DOUBLE SPEED.")
-  | inRefuge = ("STAY PUT. THE WORLD IS CATCHING UP.", "NO FREEZE UNTIL THE METER EMPTIES.")
-  | inExit = ("NO WHEEL REACHES THIS ROOM.", "THE WAY OUT IS AHEAD.")
-  | mode == Frozen && inGallery = ("REACH THE REFUGE BEFORE YOU LET GO.", "THE GREEN ALCOVE, SOUTH WALL.")
-  | mode == Frozen = ("A STOPPED WHEEL STILL CUTS.", "LET GO ONCE THROUGH THE EAST DOOR.")
-  | mode == Repaying = ("THE WORLD TAKES BACK WHAT YOU BORROWED.", "NO FREEZE UNTIL IT IS PAID. GET CLEAR!")
-  | inGallery = ("STOP THE WHEEL ONCE IT IS PAST THE REFUGE.", "IT CANNOT BE PASSED IN HERE.")
-  | otherwise = ("HOLD SPACE TO STOP THE WHEEL.", "THEN WALK AROUND IT.")
-  where
-    mode = tsMode (gTime game)
-    p = gPlayer game
-    within (Rect l b r t) = let Vec x y = p in x >= l && x <= r && y >= b && y <= t
-    inStart = within (lvlStartArea level)
-    inSafe = within (lvlSafeArea level)
-    inRefuge = within (lvlRefuge level)
-    inExit = within (Rect 470 (-20) 600 214)
-    inGallery = within (Rect (-70) 214 600 306)

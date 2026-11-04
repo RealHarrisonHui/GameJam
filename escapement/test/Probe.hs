@@ -9,7 +9,7 @@ module Main (main) where
 import Control.Monad (forM)
 import Data.Array.IO (IOUArray, newArray, readArray, writeArray)
 import Data.Maybe (catMaybes)
-import Game.Collision (rectContains)
+import Game.Collision (moveWithWalls, rectContains)
 import Game.Level
 import Game.Logic
 import Game.Types
@@ -73,11 +73,53 @@ report name v = do
   mapM_ (\(t, Vec x y, hs) -> printf "  t=%4d player (%6.0f,%6.0f)  hazards %s\n" t x y
           (unwords [printf "(%.0f,%.0f)" a b | Vec a b <- hs])) (vTrail v)
 
+-- | Could a floor be cleared without ever touching the brake?
+noBrake :: Config -> Int -> Level -> IO ()
+noBrake cfg i level = do
+  let Vec ex ey = (\(Rect l b r t) -> Vec ((l + r) / 2) ((b + t) / 2)) (lvlExit level)
+  search cfg level 3 (lvlStart level) ((== Won) . gPhase) (Vec ex ey)
+    >>= \v -> report (printf "Floor %d %s, no brake" (i + 1 :: Int) (lvlTitle level)) v { vTrail = [] }
+
+-- | Floor 3 promises that no single hold crosses two shafts. Stop the clock at
+-- every phase and flood-fill what a held brake can reach, ignoring the cap.
+oneHoldReach :: Config -> Level -> IO ()
+oneHoldReach cfg level = do
+  let wheels = lvlHazards level
+      reach = cfgPlayerRadius cfg + cfgHazardRadius cfg - cfgContactGrace cfg
+      cell = 3 :: Double
+      cols = ceiling (1280 / cell) + 1 :: Int
+      rows = ceiling (720 / cell) + 1 :: Int
+      key (Vec x y) = floor ((x + 640) / cell) * rows + floor ((y + 360) / cell)
+      step p (mx, my) = moveWithWalls (lvlWalls level) (cfgPlayerRadius cfg) p
+        (moveDelta cfg noInput { tiMoveX = mx, tiMoveY = my })
+      phase c = do
+        seen <- newArray (0, cols * rows) False :: IO (IOUArray Int Bool)
+        let spots = [routePosition (hazardRoute w) c | w <- wheels]
+            clear p = all (\h -> vDist p h > reach) spots
+            flood :: [Vec] -> Vec -> IO Vec
+            flood [] far = pure far
+            flood frontier far = do
+              next <- forM frontier $ \p -> forM [(x, y) | x <- [-1, 0, 1], y <- [-1, 0, 1]] $ \m -> do
+                let q = step p m
+                dup <- readArray seen (key q)
+                if dup || not (clear q) then pure Nothing else do
+                  writeArray seen (key q) True
+                  pure (Just q)
+              let frontier' = catMaybes (concat next)
+                  Vec far' _ = foldl (\a@(Vec ax _) b@(Vec bx _) -> if bx > ax then b else a) far frontier'
+              flood frontier' (Vec far' 0)
+            start = Vec (-362) 35
+        if clear start then flood [start] start else pure start
+  fars <- mapM phase [0 .. levelCycle level - 1]
+  let furthest = maximum [x | Vec x _ <- fars]
+  printf "Floor 3, one hold from the first shaft's door: furthest east reached at any clock phase is x=%.0f (second shaft's far door is at x=38)\n" furthest
+
 main :: IO ()
 main = do
   let cfg = defaultConfig
       level = mkLevel cfg
-      inRoom = rectContains (lvlSafeArea level) . gPlayer
+      levels = mkLevels cfg
+      inRoom = rectContains (safeZones level !! 0) . gPlayer
       won g = gPhase g == Won
       roomCentre = Vec (-120) 60
       exitCentre = Vec 535 70
@@ -91,3 +133,6 @@ main = do
       >>= report "Crossing 1, no freeze: start -> still room"
     search cfg level cell roomCentre won exitCentre
       >>= report "Crossing 2, no freeze: still room -> exit") [3, 2]
+  printf "-- every floor, grid 3 px\n"
+  mapM_ (\(i, lv) -> noBrake cfg i lv) (zip [0 ..] levels)
+  oneHoldReach cfg (levels !! 2)

@@ -1,9 +1,13 @@
 -- | The IO boundary: window, clock and key events. Everything else is pure.
 --
---   escapement                     play
+--   escapement                     play from the title
+--   escapement --level=N           start at floor N's note (1 to 5)
 --   escapement --reduced-effects   no trails, sparks or moving decoration
---   escapement --demo              watch the scripted solution, then take over
+--   escapement --no-hints          no teaching prompts or after-death hints, for playtests
+--   escapement --no-ghost          no landing ghosts, for playtests
+--   escapement --demo              watch the scripted run of every floor, then take over
 --   escapement --demo-stop=N       as --demo, but hold the picture after N ticks
+--   escapement --log               print one line per death, clear and pause to stdout
 --   escapement --fps               print measured frames per second to stdout
 --   escapement --trace             print the game state to stdout every frame
 module Main (main) where
@@ -12,10 +16,10 @@ import Control.Monad (when)
 import Data.IORef
 import Data.List (stripPrefix)
 import Data.Maybe (listToMaybe, mapMaybe)
+import Game.Campaign
 import Game.Fx
 import Game.Input
 import Game.Level
-import Game.Logic
 import Game.Solution
 import Game.Types
 import GHC.Clock (getMonotonicTime)
@@ -23,22 +27,31 @@ import Graphics.Gloss.Interface.IO.Game
 import Render
 import System.Environment (getArgs)
 import System.IO (hFlush, stdout)
+import Text.Printf (printf)
 import qualified Art
 
 main :: IO ()
 main = do
   args <- getArgs
-  let cfg = defaultConfig { cfgReducedEffects = "--reduced-effects" `elem` args }
-      level = mkLevel cfg
-      stopAt = listToMaybe (mapMaybe (fmap read . stripPrefix "--demo-stop=") args)
+  let cfg = defaultConfig
+        { cfgReducedEffects = "--reduced-effects" `elem` args
+        , cfgHints = "--no-hints" `notElem` args
+        , cfgGhost = "--no-ghost" `notElem` args }
+      levels = mkLevels cfg
+      count = length levels
+      scenes = [ mkScene cfg i count level | (i, level) <- zip [1 ..] levels ]
+      argNumber name = listToMaybe (mapMaybe (fmap read . stripPrefix name) args) :: Maybe Int
+      stopAt = argNumber "--demo-stop="
       demo = "--demo" `elem` args || stopAt /= Nothing
-      scene = mkScene cfg level
+      start0 = case argNumber "--level=" of
+        Just n  -> campaignAt cfg levels (n - 1)
+        Nothing -> newCampaign cfg levels
       world0 = World
-        { wGame    = initialGame cfg level
+        { wCampaign = start0
         , wFx      = initialFx
         , wStepper = Stepper 0 emptyInput
         , wWindow  = (1280, 720)
-        , wScript  = if demo then solutionInputs else []
+        , wScript  = if demo then campaignInputs cfg levels else []
         , wStopAt  = stopAt
         , wTicks   = 0
         }
@@ -58,25 +71,42 @@ main = do
     Art.ink
     60
     (start, world0)
-    (\(_, w) -> countFrame >> pure (render cfg level scene (wGame w) (wFx w) (wWindow w)))
+    (\(_, w) -> countFrame >> pure (render cfg levels scenes (wCampaign w) (wFx w) (wWindow w)))
     (\event (t, w) -> pure (t, onEvent event w))
     (\_ (t, w) -> do
         now <- getMonotonicTime
-        let w' = onFrame cfg level (now - t) w
-        when ("--trace" `elem` args) (putStrLn (traceLine level (wGame w')) >> hFlush stdout)
+        let w' = onFrame cfg levels (now - t) w
+        when ("--log" `elem` args) (logChange levels (wCampaign w) (wCampaign w'))
+        when ("--trace" `elem` args) (putStrLn (traceLine levels (wCampaign w')) >> hFlush stdout)
         pure (now, w'))
 
--- | One line of state for debugging and for driving the game from outside.
-traceLine :: Level -> Game -> String
-traceLine level game = unwords $
-  [ show (gPhase game), show (gTicks game), show (tsClock time), show (tsMode time), show (tsDebt time) ]
-  ++ coords (gPlayer game) ++ concatMap coords (hazardPositions level (tsClock time))
+-- | One line per event worth reading after a playtest.
+logChange :: [Level] -> Campaign -> Campaign -> IO ()
+logChange levels before after =
+  when (cIndex before == cIndex after && cScreen after == InFloor && phase0 /= phase1 && phase1 `elem` [Lost, Won, Paused]) $ do
+    let Vec x y = gPlayer game
+        time = gTime game
+    printf "%s floor=%d name=%s attempt-ticks=%d mode=%s debt=%d at=(%.0f,%.0f) deaths-here=%d\n"
+      (show phase1) (cIndex after + 1) (show (lvlTitle (currentLevel levels after)))
+      (gTicks game) (show (tsMode time)) (tsDebt time) x y (cDeaths after)
+    hFlush stdout
   where
+    game = cGame after
+    phase0 = gPhase (cGame before)
+    phase1 = gPhase game
+
+-- | One line of state for debugging and for driving the game from outside.
+traceLine :: [Level] -> Campaign -> String
+traceLine levels c = unwords $
+  [ show (cScreen c), show (cIndex c), show (gPhase game), show (gTicks game), show (tsClock time), show (tsMode time), show (tsDebt time) ]
+  ++ coords (gPlayer game) ++ concatMap coords (hazardPositions (currentLevel levels c) (tsClock time))
+  where
+    game = cGame c
     time = gTime game
     coords (Vec x y) = [show x, show y]
 
 data World = World
-  { wGame    :: !Game
+  { wCampaign :: !Campaign
   , wFx      :: !Fx
   , wStepper :: !Stepper
   , wWindow  :: !(Int, Int)
@@ -87,21 +117,25 @@ data World = World
 
 -- | Gloss's own idle loop catches up without limit after a stall, so its fixed
 -- dt is ignored: the real clock goes through the clamped accumulator instead.
-onFrame :: Config -> Level -> Double -> World -> World
-onFrame cfg level elapsed w
+onFrame :: Config -> [Level] -> Double -> World -> World
+onFrame cfg levels elapsed w
   | Just stop <- wStopAt w, wTicks w >= stop = w
   | otherwise =
-      let (stepper, (game, fx, script, ticks)) =
-            advanceFrame cfg tick elapsed (wStepper w) (wGame w, wFx w, wScript w, wTicks w)
-      in w { wGame = game, wFx = fx, wStepper = stepper, wScript = script, wTicks = ticks }
+      let (stepper, (campaign, fx, script, ticks)) =
+            advanceFrame cfg tick elapsed (wStepper w) (wCampaign w, wFx w, wScript w, wTicks w)
+      in w { wCampaign = campaign, wFx = fx, wStepper = stepper, wScript = script, wTicks = ticks }
   where
-    tick keyboard (game, fx, script, ticks) =
+    tick keyboard (campaign, fx, script, ticks) =
       let (input, script') = case script of
             (s : rest) -> (s, rest)
             []         -> (keyboard, [])
-          game' = stepGame cfg level input game
-          fx' = stepFx cfg level game game' fx
-      in (inputMustClear input game game', (game', fx', script', ticks + 1))
+          campaign' = stepCampaign cfg levels input campaign
+          -- A new floor starts its effects clean, so no trail outlives its wheels.
+          fx' | cIndex campaign /= cIndex campaign' || cScreen campaign /= cScreen campaign' =
+                  initialFx { fxTick = fxTick fx + 1 }
+              | otherwise =
+                  stepFx cfg (currentLevel levels campaign') (cGame campaign) (cGame campaign') fx
+      in (campaignMustClear input campaign campaign', (campaign', fx', script', ticks + 1))
 
 onEvent :: Event -> World -> World
 onEvent (EventResize size) w = w { wWindow = size }

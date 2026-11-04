@@ -18,8 +18,10 @@ library
   exposed-modules:  Game.Types
                     Game.TimeDebt
                     Game.Collision
+                    Game.Story
                     Game.Level
                     Game.Logic
+                    Game.Campaign
                     Game.Input
                     Game.Fx
                     Game.Solution

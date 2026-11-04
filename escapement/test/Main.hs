@@ -4,6 +4,7 @@ module Main (main) where
 import Control.Monad (unless)
 import Data.IORef
 import Data.List (foldl')
+import Game.Campaign
 import Game.Collision
 import Game.Fx
 import Game.Input
@@ -63,10 +64,23 @@ replay = scanl (flip (stepGame cfg level)) (initialGame cfg level)
 
 -- | A two-wheel-free arena for rules that need custom geometry.
 arena :: [Hazard] -> Rect -> Level
-arena hazards goal = Level
-  { lvlWalls = [], lvlFloors = [], lvlStart = Vec 0 0
-  , lvlStartArea = Rect 0 0 0 0, lvlSafeArea = Rect 0 0 0 0, lvlRefuge = Rect 0 0 0 0
-  , lvlExit = goal, lvlHazards = hazards }
+arena hazards goal = blankLevel { lvlExit = goal, lvlHazards = hazards }
+
+-- | The gallery floor's two marked refuges.
+stillRoomArea, alcoveArea :: Rect
+stillRoomArea = safeZones level !! 0
+alcoveArea = safeZones level !! 1
+
+-- | Clear of every hazard, through a full cycle, for a player anywhere inside.
+zoneIsSafe :: Level -> Rect -> Bool
+zoneIsSafe lv (Rect l b r t) = and
+  [ vLen (Vec (x - max l (min x r)) (y - max b (min y t))) > reach
+  | c <- [0 .. levelCycle lv - 1], Vec x y <- hazardPositions lv c ]
+
+floorGames :: [Level] -> Int -> [Game]
+floorGames levels i =
+  let lv = levels !! i
+  in scanl (flip (stepGame cfg lv)) (newAttempt cfg lv) (floorInputs cfg levels i)
 
 nowhere :: Rect
 nowhere = Rect 9000 9000 9001 9001
@@ -366,9 +380,9 @@ main = do
   check "   Start area is safe through the full hazard cycle, at any speed" $
     clearOfHazards (lvlStartArea level)
   check "   Recovery room is safe through the full hazard cycle, at any speed" $
-    clearOfHazards (lvlSafeArea level)
+    clearOfHazards stillRoomArea
   check "   Refuge alcove is safe through the full hazard cycle" $
-    clearOfHazards (lvlRefuge level)
+    clearOfHazards alcoveArea
   check "   Exit area is safe through the full hazard cycle" $
     clearOfHazards (lvlExit level)
   check "   Hazard routes stay inside the floors" $
@@ -443,7 +457,7 @@ main = do
       firstWon = head (filter ((== Won) . gPhase) games)
       modes = map (tsMode . gTime) games
       safeRepay = [ g | g <- games, tsMode (gTime g) == Repaying
-                      , rectContains (lvlSafeArea level) (gPlayer g) ]
+                      , rectContains stillRoomArea (gPlayer g) ]
   printf "      scripted run: won after %d ticks (%.1f s), %d ticks borrowed\n"
     (gTicks firstWon) (fromIntegral (gTicks firstWon) / 60 :: Double) (gBorrowed firstWon)
   check "   The scripted solution wins through the real logic" $
@@ -468,6 +482,102 @@ main = do
   check "   Reduced effects drops sparks and trails" $
     let reduced = cfg { cfgReducedEffects = True }
     in all (\fx -> null (fxParticles fx) && null (fxTrails fx)) (fxRun reduced)
+
+  section "Early brake presses"
+  let repayingAt debt = playing { gPlayer = Vec (-520) 70, gTime = TimeState Repaying debt 0 }
+      still = noInput
+      pressBrake = noInput { tiFreezeHeld = True, tiFreezePressed = True }
+      holdBrake = noInput { tiFreezeHeld = True }
+      after inputs g = foldl' (flip (stepGame cfg level)) g inputs
+      buffer = cfgFreezeBuffer cfg
+      pressedAt debt = after (pressBrake : replicate (debt + 5) holdBrake) (repayingAt debt)
+  check "   A press in the last moments of repayment takes effect when the debt clears" $
+    tsMode (gTime (pressedAt buffer)) == Frozen && tsDebt (gTime (pressedAt buffer)) > 0
+  check "   A press with more debt left than the buffer is ignored, as before" $
+    tsMode (gTime (pressedAt (buffer + 1))) == Normal
+  check "   Letting go cancels a buffered press" $
+    let g = after (pressBrake : still : replicate 30 still) (repayingAt 3)
+    in tsMode (gTime g) == Normal && not (gQueued g)
+  check "   A key held through a forced release still does not re-freeze" $
+    let capped = after (pressBrake : replicate 500 holdBrake)
+          (playing { gPlayer = Vec (-520) 70 })
+    in tsMode (gTime capped) == Normal && tsDebt (gTime capped) == 0
+
+  section "Landing ghosts"
+  let repayLine = iterate (stepTime cfg idle) (frozenFor 60)
+      settled = map (settledPositions level) (take 60 repayLine)
+  check "   A ghost stays put for the whole repayment" $
+    all (== head settled) settled
+  check "   Every wheel arrives exactly at its ghost when the debt clears" $
+    hazardPositions level (tsClock (repayLine !! 60)) == head settled
+  check "   Holding the key moves the ghost forward" $
+    settledPositions level (frozenFor 10) /= settledPositions level (frozenFor 30)
+
+  section "The campaign"
+  let levels = mkLevels cfg
+      floorIndices = [0 .. length levels - 1]
+      won i = gPhase (last (floorGames levels i)) == Won
+      modesOf i = map (tsMode . gTime) (floorGames levels i)
+      freezesOn i = let m = modesOf i
+                    in length (filter id (zipWith (\a b -> a /= Frozen && b == Frozen) m (drop 1 m)))
+      maxDebtOn i = maximum (map (tsDebt . gTime) (floorGames levels i))
+      repayOutside i =
+        length [ () | g <- floorGames levels i, tsMode (gTime g) == Repaying
+                    , not (any (`rectContains` gPlayer g) (safeZones (levels !! i))) ]
+  mapM_ (\i -> printf "      floor %d %-18s %4d ticks, %d freezes, peak debt %3d, %3d repaying ticks outside marked zones\n"
+                 (i + 1) (lvlTitle (levels !! i)) (gTicks (last (floorGames levels i)))
+                 (freezesOn i) (maxDebtOn i) (repayOutside i)) floorIndices
+  check "   Every floor has a run that clears it through the real rules" $
+    all won floorIndices
+  check "   Every floor's marked zones are safe through the full hazard cycle" $
+    and [ zoneIsSafe lv z | lv <- levels, z <- safeZones lv ]
+  check "   Every start point is safe and inside its start area" $
+    and [ rectContains (lvlStartArea lv) (lvlStart lv) && zoneIsSafe lv (lvlStartArea lv) | lv <- levels ]
+  check "   No wall covers a start point or an exit" $
+    and [ not (any (circleHitsRect (cfgPlayerRadius cfg) (lvlStart lv)) (lvlWalls lv))
+          && not (any (\(Rect l b r t) -> let Rect a c d e = lvlExit lv in l < d && a < r && b < e && c < t) (lvlWalls lv))
+        | lv <- levels ]
+  check "   Every floor needs the brake at least once" $
+    all ((>= 1) . freezesOn) floorIndices
+  check "   The Counting Room needs a separate brake for each shaft" $
+    freezesOn 2 == 3
+  check "   The Mainspring repays debt away from every marked zone" $
+    repayOutside 4 > 0
+  check "   Every floor has a name and a note" $
+    all (\lv -> not (null (lvlTitle lv)) && not (null (lvlBrief lv)) && not (null (lvlHint lv))) levels
+  let campaignRun = scanl (flip (stepCampaign cfg levels)) (newCampaign cfg levels) (campaignInputs cfg levels)
+      lastStep = last campaignRun
+  printf "      the whole campaign takes %d ticks (%.1f s) when played perfectly\n"
+    (cTotalTicks lastStep) (fromIntegral (cTotalTicks lastStep) / 60 :: Double)
+  check "   The scripted campaign reaches the ending with no deaths" $
+    cScreen lastStep == OnEnding && cTotalDeaths lastStep == 0
+  check "   The scripted campaign visits every floor in order" $
+    let visited = foldr (\c acc -> if take 1 acc == [cIndex c] then acc else cIndex c : acc) [] campaignRun
+    in visited == floorIndices
+  let onFloor0 = (stepCampaign cfg levels confirmKey (stepCampaign cfg levels confirmKey (newCampaign cfg levels)))
+      confirmKey = noInput { tiConfirmPressed = True }
+      walkIntoWheel = replicate 200 (move 1 0)
+      afterDeath = foldl' (flip (stepCampaign cfg levels)) onFloor0 walkIntoWheel
+      retried = stepCampaign cfg levels confirmKey afterDeath
+      afterTwo = foldl' (flip (stepCampaign cfg levels)) retried walkIntoWheel
+  check "   A death is counted and retries the same floor" $
+    cDeaths afterDeath == 1 && gPhase (cGame retried) == Playing && cIndex retried == 0
+  check "   Hints appear only after failing twice" $
+    not (hintsDue onFloor0) && not (hintsDue afterDeath) && hintsDue afterTwo
+  check "   Clearing a floor forgets its deaths" $
+    let cleared = foldl' (flip (stepCampaign cfg levels)) onFloor0 (floorInputs cfg levels 0)
+        dead = cleared { cDeaths = 5 }
+    in cDeaths (stepCampaign cfg levels confirmKey dead) == 0
+  check "   Held keys are forgotten when the floor changes" $
+    let cleared = foldl' (flip (stepCampaign cfg levels)) onFloor0 (floorInputs cfg levels 0)
+        next = stepCampaign cfg levels confirmKey cleared
+    in campaignMustClear confirmKey cleared next
+  check "   Teaching prompts follow the player's state" $
+    let lv = head levels
+        fresh = newAttempt cfg lv
+    in activePrompt lv fresh == Just "WASD OR ARROWS TO MOVE"
+       && activePrompt lv fresh { gPlayer = Vec (-420) 70 } == Just "HOLD SPACE"
+       && activePrompt lv fresh { gTime = TimeState Frozen 5 0, gPlayer = Vec (-340) 40 } == Just "KEEP HOLDING. WALK AROUND IT"
 
   failed <- readIORef failures
   total <- readIORef count

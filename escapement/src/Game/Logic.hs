@@ -22,6 +22,7 @@ initialGame _ level = Game
   , gTicks    = 0
   , gBorrowed = 0
   , gHitBy    = Nothing
+  , gQueued   = False
   }
 
 -- | A fresh attempt. Restart and retry both land here.
@@ -56,7 +57,14 @@ stepGame cfg level input game = case gPhase game of
 simulate :: Config -> Level -> TickInput -> Game -> Game
 simulate cfg level input game =
   let time0 = gTime game
-      time1 = stepTime cfg (TimeInput (tiFreezeHeld input) (tiFreezePressed input)) time0
+      held = tiFreezeHeld input
+      queued = gQueued game && held
+      time1 = stepTime cfg (TimeInput held (tiFreezePressed input || queued)) time0
+      -- A press in the last moments of repayment is kept until the debt clears,
+      -- so a slightly early press is not silently lost. Only a fresh press
+      -- queues, which keeps a key held through a forced release from re-freezing.
+      queued1 = held && tsMode time0 == Repaying
+        && (queued || (tiFreezePressed input && tsDebt time0 <= cfgFreezeBuffer cfg))
       p0 = gPlayer game
       p1 = moveWithWalls (lvlWalls level) (cfgPlayerRadius cfg) p0 (moveDelta cfg input)
       hit = hazardHit cfg level (tsClock time0) (tsClock time1) p0 p1
@@ -66,6 +74,7 @@ simulate cfg level input game =
         , gTime     = time1
         , gTicks    = gTicks game + 1
         , gBorrowed = gBorrowed game + frozenNow
+        , gQueued   = queued1
         }
   in case hit of
        Just index -> moved { gPhase = Lost, gHitBy = Just index }

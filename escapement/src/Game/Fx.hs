@@ -21,7 +21,7 @@ data Particle = Particle
   , ptCool :: !Bool  -- ^ verdigris rather than ember
   } deriving (Eq, Show)
 
-data RingKind = RingFreeze | RingRelease | RingImpact | RingWin deriving (Eq, Show)
+data RingKind = RingFreeze | RingRelease | RingCleared | RingImpact | RingWin deriving (Eq, Show)
 
 data Ring = Ring
   { rgPos  :: !Vec
@@ -90,12 +90,14 @@ stepFx cfg level before after fx
 
     began  = tsMode time0 /= Frozen && mode == Frozen
     ended  = tsMode time0 == Frozen && mode /= Frozen
+    cleared = playing && tsMode time0 == Repaying && mode == Normal
     lost   = gPhase before /= Lost && gPhase after == Lost
     won    = gPhase before /= Won && gPhase after == Won
 
     newRings = concat
       [ [Ring player 0 28 RingFreeze  | began]
       , [Ring player 0 22 RingRelease | ended]
+      , [Ring player 0 26 RingCleared | cleared]
       , [Ring player 0 30 RingImpact  | lost]
       , [Ring player 0 60 RingWin     | won]
       ]
@@ -119,6 +121,7 @@ stepFx cfg level before after fx
     newSparks = concat
       [ if lost then burst 22 3.6 34 False else []
       , if won then burst 14 1.6 56 True else []
+      , if cleared then burst 8 1.5 24 True else []
       , grind
       ]
     ageSpark p = p { ptPos = vAdd (ptPos p) (ptVel p), ptVel = vScale 0.94 (ptVel p), ptAge = ptAge p + 1 }

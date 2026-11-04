@@ -5,7 +5,7 @@ module Game.Types
   , Config (..), defaultConfig
   , TemporalMode (..), TimeState (..), TimeInput (..), initialTime
   , HazardTick
-  , Route (..), Hazard (..), Level (..)
+  , Route (..), Hazard (..), Zone (..), Prompt (..), Cog, Level (..), blankLevel
   , TickInput (..), noInput
   , Phase (..), Game (..)
   ) where
@@ -46,7 +46,10 @@ data Config = Config
   , cfgGalleryPhase   :: !Int
   , cfgMaxFrameTime   :: !Double  -- ^ seconds; longer frames are clamped
   , cfgMaxCatchUp     :: !Int     -- ^ most simulation ticks run in one frame
+  , cfgFreezeBuffer   :: !Int     -- ^ a press this many ticks before the debt clears still counts
   , cfgReducedEffects :: !Bool    -- ^ drop trails, sparks and moving decoration
+  , cfgGhost          :: !Bool    -- ^ show where each wheel lands when the debt clears
+  , cfgHints          :: !Bool    -- ^ show teaching prompts and after-death hints
   , cfgTrailLength    :: !Int     -- ^ samples kept per hazard
   , cfgMaxParticles   :: !Int
   , cfgMaxRings       :: !Int
@@ -67,7 +70,10 @@ defaultConfig = Config
   , cfgGalleryPhase   = 40
   , cfgMaxFrameTime   = 0.1
   , cfgMaxCatchUp     = 5
+  , cfgFreezeBuffer   = 8
   , cfgReducedEffects = False
+  , cfgGhost          = True
+  , cfgHints          = True
   , cfgTrailLength    = 12
   , cfgMaxParticles   = 48
   , cfgMaxRings       = 4
@@ -105,16 +111,47 @@ data Route = Route
 
 newtype Hazard = Hazard { hazardRoute :: Route } deriving (Eq, Show)
 
+-- | Marked floor that no wheel can reach. Decoration and test data, not a rule.
+data Zone = Zone
+  { zoneRect  :: !Rect
+  , zoneLabel :: String
+  , zoneSub   :: String
+  } deriving (Eq, Show)
+
+-- | A short line of teaching shown beside the player. The first match wins.
+data Prompt = Prompt
+  { promptArea :: !(Maybe Rect)
+  , promptMode :: !(Maybe TemporalMode)
+  , promptText :: String
+  } deriving (Eq, Show)
+
+-- | Background gear: x, y, turn rate, teeth, outer radius, inner radius.
+type Cog = (Double, Double, Double, Int, Double, Double)
+
 data Level = Level
   { lvlWalls     :: [Rect]
   , lvlFloors    :: [Rect]    -- ^ walkable space, used for drawing and checks
   , lvlStart     :: !Vec
   , lvlStartArea :: !Rect
-  , lvlSafeArea  :: !Rect     -- ^ the recovery room
-  , lvlRefuge    :: !Rect     -- ^ the alcove partway along the second crossing
+  , lvlZones     :: [Zone]
   , lvlExit      :: !Rect
   , lvlHazards   :: [Hazard]
+  , lvlTitle     :: String    -- ^ the floor's name
+  , lvlBrief     :: [String]  -- ^ the note shown before the floor
+  , lvlPrompts   :: [Prompt]  -- ^ teaches a verb, never a solution
+  , lvlHint      :: [String]  -- ^ appears only after repeated deaths
+  , lvlNoteAt    :: !Vec      -- ^ where the floor's name is engraved
+  , lvlCogs      :: [Cog]
+  , lvlGhosts    :: !Bool     -- ^ landing ghosts appear once debt has been taught
   } deriving (Eq, Show)
+
+-- | An empty arena, for levels and tests that fill in only what they need.
+blankLevel :: Level
+blankLevel = Level
+  { lvlWalls = [], lvlFloors = [], lvlStart = Vec 0 0, lvlStartArea = Rect 0 0 0 0
+  , lvlZones = [], lvlExit = Rect 9000 9000 9001 9001, lvlHazards = []
+  , lvlTitle = "", lvlBrief = [], lvlPrompts = [], lvlHint = []
+  , lvlNoteAt = Vec (-576) 330, lvlCogs = [], lvlGhosts = True }
 
 -- | Everything one simulation tick needs from the outside world.
 data TickInput = TickInput
@@ -139,4 +176,5 @@ data Game = Game
   , gTicks    :: !Int        -- ^ simulation ticks of play in this attempt
   , gBorrowed :: !Int        -- ^ total ticks frozen this attempt (end-screen statistic)
   , gHitBy    :: !(Maybe Int)  -- ^ index of the hazard that ended the attempt
+  , gQueued   :: !Bool       -- ^ a freeze pressed just before the debt cleared, still held
   } deriving (Eq, Show)
