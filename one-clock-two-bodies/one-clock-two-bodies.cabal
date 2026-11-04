@@ -1,0 +1,54 @@
+cabal-version:      2.4
+name:               one-clock-two-bodies
+version:            0.1.0.0
+synopsis:           Graybox prototype: two characters, one clock.
+build-type:         Simple
+extra-doc-files:    README.md
+
+common shared
+    default-language: Haskell2010
+    ghc-options:      -Wall
+
+-- Pure gameplay rules. Depends only on base, so the tests build and run even
+-- on a machine where graphics are broken.
+library
+    import:           shared
+    hs-source-dirs:   src
+    exposed-modules:  Game.Types
+                      Game.Level
+                      Game.Logic
+                      Game.Input
+    build-depends:    base >=4.18 && <5
+
+-- The window: everything that touches Gloss lives here.
+executable one-clock
+    import:           shared
+    hs-source-dirs:   app
+    main-is:          Main.hs
+    other-modules:    Game.Render
+    build-depends:    base >=4.18 && <5
+                    , one-clock-two-bodies
+                    , gloss ==1.13.2.2
+
+-- The art test: a separate, throwaway program. The game above does not use it.
+executable art-test
+    import:           shared
+    hs-source-dirs:   art
+    main-is:          Main.hs
+    other-modules:    Art.Plain
+                      Art.Raster
+                      Art.Scene
+                      Art.Visual
+    ghc-options:      -O2
+    build-depends:    base >=4.18 && <5
+                    , bytestring
+                    , one-clock-two-bodies
+                    , gloss ==1.13.2.2
+
+test-suite tests
+    import:           shared
+    type:             exitcode-stdio-1.0
+    hs-source-dirs:   test
+    main-is:          Main.hs
+    build-depends:    base >=4.18 && <5
+                    , one-clock-two-bodies

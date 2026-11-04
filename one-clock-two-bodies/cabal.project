@@ -1,0 +1,4 @@
+packages: .
+
+-- GHC version this prototype was tested with. Remove this line to try another.
+with-compiler: ghc-9.6.7
